@@ -72,6 +72,12 @@ class Ledger(Protocol):
         root the ZK proof was made against and the hash of the stored proof bundle."""
         ...
 
+    def anchor_passkey(self, digest: str, pubkey: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        """Passkey anchor: memo {"d", "k": device Ed25519 pubkey, "w": bundle_hash}, no "s".
+        The P-256 WebAuthn assertion over the digest is in the stored bundle; the device's
+        Credential URI attests the passkey (credential_passkey). Anchor.signature = ""."""
+        ...
+
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         """Read back an anchor tx (also when not validated yet: validated=False).
         None if not found / not a veripress memo."""
@@ -138,6 +144,12 @@ class FakeLedger:
         h = self._tx_hash(digest, bundle_hash)
         return self._store(Anchor(h, digest, "", "", int(time.time()), f"fake://tx/{h}", validated=wait,
                                   anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash))
+
+    def anchor_passkey(self, digest: str, pubkey: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        # Kept aligned with XrplLedger.anchor_passkey by Dev B (team-rules: FakeLedger alignment).
+        h = self._tx_hash(digest, bundle_hash)
+        return self._store(Anchor(h, digest, "", pubkey, int(time.time()), f"fake://tx/{h}", validated=wait,
+                                  bundle_hash=bundle_hash))
 
     def validate(self, tx_hash: str) -> None:
         """Tests: the submitted tx makes it into a validated ledger."""
@@ -297,6 +309,11 @@ class XrplLedger:
         return self._remember(Anchor(tx_hash, digest, "", "", ts, EXPLORER + tx_hash, validated=ok,
                                      anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash))
 
+    def anchor_passkey(self, digest: str, pubkey: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        tx_hash, ts, ok = self._submit_anchor({"d": digest, "k": pubkey, "w": bundle_hash}, wait)
+        return self._remember(Anchor(tx_hash, digest, "", pubkey, ts, EXPLORER + tx_hash, validated=ok,
+                                     bundle_hash=bundle_hash))
+
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         from xrpl.models.requests import Tx
 
@@ -407,7 +424,53 @@ class XrplLedger:
     # --- Phase 2: implemented by a later Dev B feature PR (task 6 in tasks-dev-b.md) ---
 
     def credential_passkey(self, pubkey: str) -> str | None:
-        raise NotImplementedError("phase 2 task 6 (passkey)")
+        """Passkey hash the registry attested in the URI of the device's CAPTURE_DEVICE
+        credential (current state: an assertion is checked against the device as it is now)."""
+        from xrpl.core.keypairs import derive_classic_address
+        from xrpl.models.requests import LedgerEntry
+        from xrpl.models.requests.ledger_entry import Credential
+        from xrpl.utils import str_to_hex
+
+        try:
+            subject = derive_classic_address(pubkey)
+        except Exception:
+            return None
+        resp = self._request(
+            LedgerEntry(
+                credential=Credential(
+                    subject=subject, issuer=self.registry,
+                    credential_type=str_to_hex(CredentialType.CAPTURE_DEVICE.value),
+                ),
+                ledger_index="validated",
+            )
+        )
+        if not resp.is_successful():
+            return None
+        node = resp.result["node"]
+        if not node.get("Flags", 0) & LSF_ACCEPTED:
+            return None
+        return _passkey_from_uri(node.get("URI", ""))
+
+
+PASSKEY_URI_PREFIX = "passkey:sha256:"
+
+
+def passkey_uri(passkey_sha256: str) -> str:
+    """Credential URI attesting a passkey (docs/interfaces.md)."""
+    return PASSKEY_URI_PREFIX + passkey_sha256.lower()
+
+
+def _passkey_from_uri(uri_hex: str) -> str | None:
+    from xrpl.utils import hex_to_str
+
+    try:
+        uri = hex_to_str(uri_hex)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not uri.startswith(PASSKEY_URI_PREFIX):
+        return None
+    h = uri[len(PASSKEY_URI_PREFIX):].lower()
+    return h if len(h) == 64 and all(c in "0123456789abcdef" for c in h) else None
 
 
 def _compact(data: dict) -> str:
