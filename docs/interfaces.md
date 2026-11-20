@@ -244,3 +244,8 @@ N enregistrements signés, **une** transaction XRPL. La signature de chaque phot
 - Ledger (Dev B pour `XrplLedger`) : `anchor_batch(root, count, wait=True) -> Anchor`, Memo `veripress/v1` `{"b": root, "n": count}`. `fetch_anchor` d'une telle transaction renvoie `Anchor(digest=root, batch_size=count, signature="", pubkey="")`.
 - `/api/verify` : nouvelle clé `"batch": {"tx_hash", "index", "size"} | null`.
 - Démo : `uv run python -m veripress.cli demo-batch photos… -o out/`.
+- API (Dev B) : `POST /api/sign/batch` (multipart : `images` ×1 à 8, `signer`, `anonymous?`, `wait?`) → `{"tx_hash", "explorer_url", "size", "pending", "entries": [{"name", "entry_id", "image_url"} | {"name", "error"}]}`. Chaque photo est signée normalement, puis **une** transaction ancre le lot. Un fichier illisible est signalé dans `entries` sans bloquer les autres ; 422 si aucun n'a pu être signé.
+
+## C2PA à la vérification (Dev B, accord de Dev A)
+
+`/api/verify` : nouvelle clé `"c2pa"`, lue sur les **octets** envoyés (`c2pa_embed.read`), jamais sur les pixels : `null` (pas de manifeste, par exemple après WhatsApp) ou `{"tx_hash", "manifest_digest", "explorer", "source_type", "state", "signer_trusted", "matches_anchor"}`. `matches_anchor` vaut `true` si le manifeste désigne l'ancrage (ou l'entrée) retrouvé par VeriPress. C'est **une information, pas une preuve** (`security-review.md`) : le verdict n'en dépend pas, et la page l'affiche avec ℹ️.
