@@ -174,7 +174,7 @@ Exceptions : `ValueError` = requête invalide (→ 422 dans l'API) ; `KeyError` 
 
 ## HTTP — ajouts
 
-`POST /api/sign` : nouveaux champs `anonymous` (`"1"`/absent) et `wait` (`"0"` = ancrage rapide). L'API passe à `sign_image` l'EXIF brut du fichier envoyé. Réponse : nouveaux champs `"anonymous": bool`, `"pending": bool`, `"meta_claims": [...]` (même format que ci-dessous).
+`POST /api/sign` : nouveaux champs `anonymous` (`"1"`/absent) et `wait` (`"0"` = ancrage rapide). L'API passe à `sign_image` l'EXIF brut du fichier envoyé : `exif=metadata.exif_from_upload(data)` (Dev A ; `None` pour un RAW ou sans EXIF). Réponse : nouveaux champs `"anonymous": bool`, `"pending": bool`, `"meta_claims": [...]` (même format que ci-dessous).
 
 `POST /api/sign/passkey/prepare` (multipart `image`, `parent?`) → `{"prep_id", "challenge"}` ; `POST /api/sign/passkey/complete` (JSON `{"prep_id", "assertion"}`) → comme `/api/sign`.
 

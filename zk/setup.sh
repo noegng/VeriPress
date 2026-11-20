@@ -14,7 +14,7 @@ mkdir -p build
 [ -d node_modules ] || npm install --silent
 [ -f "$PTAU" ] || curl -fsSL "$PTAU_URL" -o "$PTAU"
 
-for c in ${CIRCUITS:-device}; do
+for c in ${CIRCUITS:-device meta}; do
   circom "circuits/$c.circom" --r1cs --wasm -o build >/dev/null
   cp "build/${c}_js/${c}.wasm" "build/$c.wasm"
   npx snarkjs groth16 setup "build/$c.r1cs" "$PTAU" "build/${c}_0000.zkey" >/dev/null

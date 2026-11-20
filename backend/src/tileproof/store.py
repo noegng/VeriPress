@@ -68,6 +68,18 @@ class Store:
         p = self.root / entry_id / "bundle.json"
         return json.loads(p.read_text()) if p.exists() else None
 
+    def put_meta(self, entry_id: str, claims: list[dict]) -> None:
+        """ZK proofs of capture-metadata claims (untrusted: checked against the signed commitment)."""
+        (self.root / entry_id / "meta.json").write_text(json.dumps(claims, separators=(",", ":")))
+
+    def get_meta(self, entry_id: str) -> list[dict]:
+        p = self.root / entry_id / "meta.json"
+        try:
+            data = json.loads(p.read_text()) if p.exists() else []
+        except ValueError:
+            return []
+        return data if isinstance(data, list) else []
+
     def image_path(self, entry_id: str) -> Path:
         return self.root / entry_id / "image.png"
 

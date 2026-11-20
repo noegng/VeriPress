@@ -37,7 +37,7 @@ from .tiling import Grid
 from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
-from . import watermark, zk
+from . import metadata, watermark, zk
 from .signing import keys_dir, load_key, verify_signature
 from .store import Entry, Store
 
@@ -155,12 +155,14 @@ def _anonymous_registry(signer: Signer) -> tuple[dict, list[list[str]], int]:
 
 def sign_image(
     rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None,
-    anonymous: bool = False, wait: bool = True,
+    anonymous: bool = False, wait: bool = True, exif: bytes | None = None,
 ) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
     `parent`: tx hash of the signed version this image was edited from (version chain).
     `anonymous`: prove membership of the device registry in zero knowledge instead of
-    publishing the device key and signature (decisions.md Q2-Q4)."""
+    publishing the device key and signature (decisions.md Q2-Q4).
+    `exif`: raw EXIF of the uploaded file; with a capture time + GPS, the manifest commits to
+    them and day / ~10 km area claims are proven in zero knowledge (decisions.md Q16-Q17)."""
     if parent is not None and (store.get(parent) is None or ledger.fetch_anchor(parent) is None):
         raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
     if anonymous:
@@ -177,6 +179,10 @@ def sign_image(
     manifest.anonymous = anonymous
     manifest.op = "ai_generate" if signer == "ai" else ("edit" if parent else "capture")
     manifest.parent = parent
+    capture = metadata.read_capture(exif)
+    salt = os.urandom(31).hex() if capture else None  # never stored: only the claims are published
+    if capture:
+        manifest.meta_commitment = zk.commit_meta(capture.time, capture.lat_e6, capture.lon_e6, salt)
     digest = manifest.digest()
     bundle = None
     if anonymous:
@@ -188,7 +194,29 @@ def sign_image(
     store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, disclosure, phash(rgb)), png)
     if bundle is not None:
         store.put_bundle(anchor.tx_hash, bundle)
+    if capture:
+        store.put_meta(anchor.tx_hash, [
+            {"kind": c.kind, **zk.prove_meta(capture.time, capture.lat_e6, capture.lon_e6, salt, c.bounds())}
+            for c in metadata.claims(capture)
+        ])
     return SignResult(anchor.tx_hash, anchor, manifest), png
+
+
+def _meta_claims(manifest: Manifest, stored: list[dict]) -> list[dict]:
+    """Verified capture-metadata claims. Each proof must be bound to the commitment in the
+    signed manifest; labels come from its public inputs, never from stored text."""
+    out = []
+    for c in stored if manifest.meta_commitment else []:
+        public = c.get("public") if isinstance(c, dict) else None
+        if not isinstance(public, list) or len(public) != 7:
+            continue
+        try:
+            kind, label = metadata.describe(public)
+        except (TypeError, ValueError):
+            continue
+        ok = str(public[0]) == manifest.meta_commitment and zk.verify_meta(c.get("proof", {}), public)
+        out.append({"kind": kind, "label": label, "proof_ok": bool(ok)})
+    return out
 
 
 def _check_anonymous(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledger: Ledger) -> dict:
@@ -308,6 +336,7 @@ def verify_image(
         verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history,
         anonymous=anchor.anonymous, zk=zk_check, credential_revoked_at=revoked_at,
         pending=not anchor.validated,
+        meta_claims=_meta_claims(manifest, store.get_meta(entry.tx_hash)),
     )
     hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
     return report, hm

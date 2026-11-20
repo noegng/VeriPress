@@ -59,3 +59,23 @@ def verify_device(proof: dict, public: list[str]) -> bool:
         return bool(_run("verify-device", {"proof": proof, "public": public})["ok"])
     except ZkError:
         return False
+
+
+# ---- ZK B: capture metadata (meta.circom) ----
+
+
+def commit_meta(time: int, lat_e6: int, lon_e6: int, salt: str) -> str:
+    """Poseidon commitment to the capture time + position (salt: 31 bytes hex, kept secret)."""
+    return _run("commit-meta", {"time": time, "lat_e6": lat_e6, "lon_e6": lon_e6, "salt": salt})["commitment"]
+
+
+def prove_meta(time: int, lat_e6: int, lon_e6: int, salt: str, bounds: dict) -> dict:
+    """{"proof", "public": [commitment, t_min, t_max, lat_min, lat_max, lon_min, lon_max]} (shifted)."""
+    return _run("prove-meta", {"time": time, "lat_e6": lat_e6, "lon_e6": lon_e6, "salt": salt, **bounds})
+
+
+def verify_meta(proof: dict, public: list[str]) -> bool:
+    try:
+        return bool(_run("verify-meta", {"proof": proof, "public": public})["ok"])
+    except ZkError:
+        return False
