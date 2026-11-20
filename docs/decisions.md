@@ -1,82 +1,93 @@
-# Décisions d'équipe (récapitulatif des séances de grilling)
+# Design decisions
 
-Pour chaque question : la décision retenue et, si utile, pourquoi. Les détails techniques et les formats sont dans [`interfaces.md`](interfaces.md), la répartition dans [`team-rules.md`](team-rules.md) et les fiches de tâches.
+Record of the team's design sessions (structured question-and-answer sessions with Claude Code, see [`../AI-USAGE.md`](../AI-USAGE.md)). For each question: what was decided, why when useful, and what came of it. Formats are in [`interfaces.md`](interfaces.md); the resulting design is in [`architecture.md`](architecture.md).
 
 ---
 
-## Séance 1 — périmètre de la démo (ven. 20/11, début de journée)
+## Session 1: demo scope (Fri 20 Nov, morning)
 
-| # | Question | Décision |
-|---|---|---|
-| 1 | Étapes de démo à garder | 1 photo 🟢, 2 retouche 🟠 + carte, 3 WhatsApp, 6 image IA 🔵 ; 4 masquage si le temps le permet ; 5 (copie du filigrane) dépend du filigrane. **Résultat : les 6 étapes sont faites.** |
-| 2 | Filigrane TrustMark | À faire si possible (« la solution la plus pro possible »), avec repli sur un hachage perceptuel. **Fait.** |
-| 3 | Signature à la capture | Ed25519 logiciel d'abord, vraie passkey plus tard si le temps le permet. |
-| 4 | Réseau XRPL | **Testnet** (plus stable que Devnet, Credentials actifs). |
-| 5 | Format de l'ancrage | Payment de 1 drop + Memo (`veripress/v1`). |
-| 6 | Frontend | Une page servie par FastAPI d'abord ; visualisations (arbre de Merkle ↔ image) en option. **Faites.** |
-| 7 | WhatsApp pendant la démo | Image préparée à l'avance, et vidéo de secours. Le réseau de la salle n'est pas fiable. |
-| 8 | Où faire du TDD | Seulement : arbres de Merkle / preuves de masquage et règles du verdict final. |
-| 9 | Répartition | Dev A (Noé) : confiance et vérification (signature, pipeline, verdict, store, filigrane). Dev B : registre et interface (XRPL, API, page, visualisations). |
-| 10 | Contrats avant de coder | `ledger.py` (avec un `FakeLedger`) + `docs/interfaces.md`, écrits avant de se séparer. |
-| 11 | Git | Branches `dev-a/*` / `dev-b/*`, chacun n'écrit que dans ses fichiers, points de synchro. Les règles sont écrites pour les agents dans `team-rules.md`. |
-| 12 | Où vit la divulgation | `store/` local indexé par tx hash (en production : IPFS ou hébergée par le propriétaire). |
-| 13 | Retrouver une image sans filigrane | Hachage perceptuel 64 bits, recherche du plus proche voisin. |
-| 14 | Ordre des options | Filigrane → masquage dans la page → visualisation arbre ↔ image → passkey → chaîne de versions. |
-| 15 | Image IA | Image générée à l'avance, signée par une clé qui porte le Credential `AI_GENERATOR`. |
-| 16 | Chaîne de versions (`parent`) | En option, en dernier. **Faite.** |
+| # | Question | Decision | Outcome |
+|---|---|---|---|
+| 1 | Demo steps to keep | 1 photo 🟢, 2 edit 🟠 + heatmap, 3 WhatsApp, 6 AI image 🔵; 4 redaction if time allows; 5 (copied watermark) depends on the watermark | All six steps done |
+| 2 | TrustMark watermark | Do it if possible, with a perceptual-hash fallback | Done, with the fallback |
+| 3 | Signing at capture | Software Ed25519 first, real passkey later if time allows | Passkey done (session 2, Q21–Q23) |
+| 4 | XRPL network | **Testnet**: more stable than Devnet, Credentials active | Kept |
+| 5 | Anchor format | Payment of 1 drop + Memo `veripress/v1` | Kept, extended for the anonymous, passkey and batch modes |
+| 6 | Front end | A single page served by FastAPI; Merkle tree ↔ image views as an option | Done, views included |
+| 7 | WhatsApp during the demo | Image prepared in advance, plus a backup video: the venue network is unreliable | Kept |
+| 8 | Where to use test-driven development | Only on Merkle trees / redaction proofs and the final verdict rules | Kept; ~267 tests in the end |
+| 9 | Work split | Dev A: trust and verification (signature, pipeline, verdict, store, watermark). Dev B: registry and interface (XRPL, API, page, visualisations) | Kept |
+| 10 | Contracts before coding | `ledger.py` with a `FakeLedger`, and `interfaces.md`, written before splitting up | Kept |
+| 11 | Git | Branches `dev-a/*` / `dev-b/*`, each developer writes only to their own files | Kept; pull requests from Friday afternoon |
+| 12 | Where the disclosure lives | Local `store/` indexed by tx hash (production: IPFS or hosted by the owner) | Kept, plus content addressing (Q9) |
+| 13 | Finding an image without a watermark | 64-bit perceptual hash, nearest neighbour | Kept |
+| 14 | Order of options | Watermark → redaction in the page → tree ↔ image view → passkey → version chain | All done |
+| 15 | AI image | Generated in advance, signed by a key holding the `AI_GENERATOR` Credential | Done |
+| 16 | Version chain (`parent`) | Optional, last | Done |
 
-### Décisions prises ensuite, au fil du travail
+### Decisions taken along the way
 
-| Sujet | Décision |
+| Topic | Decision |
 |---|---|
-| Commits | Pas de mention « Claude » en co-auteur. |
-| Passkey | Confiée à Dev B (phase 1), reprise dans la phase 2 (Q21–Q23). |
-| Calibrage | Sur de vraies photos iPhone passées par WhatsApp : taille de tuile adaptative (~1/40 du grand côté), conversion ICC → sRGB, rééchantillonnage sans troncature, poids 0,5 sur le coefficient DC. |
-| Formats pros | 16 bits ramené sur 8 bits, RAW via LibRaw (`rawpy`), `load_upload` comme point d'entrée de l'API. JPEG XL laissé de côté. |
-| Original non tatoué | **Engagement double** : chaque feuille robuste engage la version tatouée **et** l'original, et une tuile est conforme si elle est proche de l'une ou de l'autre. Préféré au re-tatouage à la vérification, qui aurait introduit un réseau de neurones dans le verdict (risque d'attaque adversariale, dépendance à une version). |
-| Fusion dans `main` | **Par PR GitHub**, à partir du 20/11 après-midi. |
-| Revue d'architecture | `/improve-codebase-architecture` non utilisé (coûteux, et déconseillé en hackathon) ; à la place, une revue de code sur deux axes (standards et spec). |
+| Calibration | On real iPhone photos sent through WhatsApp: adaptive tile size (~1/40 of the long side, replacing the fixed 32 px), ICC → sRGB conversion, resampling without clipping, weight 0.5 on the DC coefficient |
+| Professional formats | 16-bit scaled to 8 bits, RAW via LibRaw (`rawpy`), `load_upload` as the API entry point. JPEG XL left out |
+| Unwatermarked original | **Dual commitment**: each robust leaf commits the watermarked version **and** the original; a tile matches if it is close to either. Chosen over re-watermarking at verification, which would have put a neural network in the verdict (adversarial inputs, version dependence) |
+| Watermark id | Random 64-bit id chosen at signing and committed in the manifest (the first plan derived it from the tx hash, which is only known after anchoring, while the watermark must be in the pixels before committing) |
+| Architecture review | A two-axis code review (standards, spec) rather than a large refactoring pass |
 
 ---
 
-## Séance 2 — phase 2 (ven. 20/11, après-midi)
+## Session 2: phase 2 (Fri 20 Nov, afternoon)
 
-### Tour 1 — périmètre et ordre
+### Round 1: scope and order
 
-| # | Question | Décision |
+| # | Question | Decision | Outcome |
+|---|---|---|---|
+| Q1 | Order (whatever is not done at the 10:00 freeze becomes future work) | 1 ZK anonymous attestation · 2 non-retroactive revocation · 3 public link `/v/<tx>` · 4 ZK metadata · 5 fast anchoring · 6 C2PA · 7 passkey · 8 content-addressed storage · 9 aggregated anchoring | All nine done |
+| Q2 | Keys for ZK | Each device also gets a **Baby Jubjub** key (EdDSA-Poseidon, circuit-friendly). The registry publishes on XRPL the root of a Poseidon Merkle tree of accredited keys. The Ed25519 key keeps the named mode | Done |
+| Q3 | Anonymous mode | The anchor carries neither the device key nor its signature, only the digest, the registry root and the hash of the proof. Verdict 🟢 "accredited device (anonymous)". Chosen at signing ("Sign anonymously" box) | Done |
+| Q4 | Valid root | A proof is accepted if its root **was in force at anchor time**. Revoking = publishing a new root, so revocation is not retroactive in anonymous mode either | Done |
+| Q5 | Non-retroactive revocation (named mode) | Revocation date read from the `CredentialDelete` in the registry history. Photo anchored before: 🟢 + "device revoked since …"; after: ⚪ | Done |
+| Q6 | Where proofs are generated | Server side (Node + snarkjs called from Python); in the browser as an option | Server side |
+| Q7 | ZK toolchain | circom (built with cargo), snarkjs + circomlib in `zk/`; compiled circuit and verification key committed; Hermez/PSE powers of tau (production: multi-party phase 2) | Done |
+| Q8 | Aggregated anchoring | Without the Batch amendment (not on Testnet): Merkle tree of N records, anchor the root, each photo keeps its inclusion proof | Done |
+| Q9 | Decentralised storage | Disclosures are already self-authenticating. Compute an IPFS CID, put it in the signed manifest, serve the file from our API, no real pinning | Done (CID in the manifest rather than the memo) |
+| Q10 | C2PA | C2PA manifest (`c2pa-python`) with a test certificate, said honestly | Done |
+| Q11 | Fast anchoring | `/api/sign` answers on submission; the page shows "pending"; the verdict carries a `pending` flag | Done |
+| Q12 | Split | Dev A: ZK, metadata, C2PA, pending status in the pipeline, server-side WebAuthn check. Dev B: revocation, public link, fast anchoring, registry roots, passkey page and routes. CID and batching: whoever is free first | Done (CID and batching by Dev A on the pipeline side, Dev B on the ledger side) |
+
+### Round 2: ZK, metadata, contract, demo
+
+| # | Question | Decision |
 |---|---|---|
-| Q1 | Ordre (ce qui n'est pas fini à 10:00 passe en « travail futur ») | 1 ZK A (attestation anonyme) · 2 révocation non rétroactive · 3 lien public `/v/<tx>` · 4 ZK B (métadonnées) · 5 ancrage rapide · 6 C2PA · 7 passkey · 8 stockage par adresse de contenu · 9 ancrage groupé. |
-| Q2 | Clés pour le ZK | Chaque appareil a en plus une **clé Baby Jubjub** (EdDSA-Poseidon, compatible circuits). Le registre publie sur XRPL la racine d'un arbre de Merkle Poseidon des clés accréditées. La clé Ed25519 garde le mode nominatif. |
-| Q3 | Mode anonyme | L'ancrage ne contient ni la clé ni la signature de l'appareil, mais le digest, la racine du registre et la preuve (son hash, voir Q13 et interfaces.md). Verdict 🟢 « appareil accrédité (anonyme) ». Choix au moment de signer (case « Signer anonymement »). |
-| Q4 | Racine valide | Une preuve est acceptée si sa racine **était en vigueur au moment de l'ancrage**. Révoquer = publier une nouvelle racine, ce qui rend la révocation non rétroactive en mode anonyme. |
-| Q5 | Révocation non rétroactive (nominatif) | Date de révocation lue dans le `CredentialDelete` de l'historique du registre. Photo ancrée avant : 🟢 + « appareil révoqué depuis le … » ; après : ⚪. Dev B, dans `XrplLedger` (`at_time`). |
-| Q6 | Où générer les preuves | Côté serveur (Node + snarkjs appelés depuis Python) ; dans le navigateur en option. |
-| Q7 | Chaîne d'outils ZK | `circom` compilé avec `cargo` ; `snarkjs` + `circomlib` dans `zk/` ; circuit compilé et clé de vérification commités ; cérémonie avec le fichier « powers of tau » de Hermez (dans le pitch : en production, phase 2 multi-parties). |
-| Q8 | Ancrage groupé | Sans l'amendement Batch (absent de Testnet) : arbre de Merkle de N manifestes, on ancre la racine, chaque photo garde sa preuve d'inclusion. En dernier. |
-| Q9 | Stockage décentralisé | Les divulgations sont déjà auto-authentifiées. On calcule un CID IPFS mis dans le Memo et on sert le fichier par notre API, sans épinglage réel. |
-| Q10 | C2PA | Manifeste C2PA (`c2pa-python`) avec un certificat de test, en le disant honnêtement. |
-| Q11 | Ancrage rapide | `/api/sign` répond dès la soumission ; la page affiche « en attente » ; le verdict porte un drapeau `pending`. |
-| Q12 | Répartition | **Dev A** : ZK A, ZK B, engagement des métadonnées, C2PA, statut « en attente » dans le pipeline (+ vérification WebAuthn côté serveur, voir Q21). **Dev B** : révocation non rétroactive, lien public, ancrage rapide, publication des racines du registre, passkey (page et routes), interface. CID et ancrage groupé : le premier libre. |
+| Q13 | Nullifier | **None**: the manifest digest is a public input and the signature checked in the circuit covers it, so a proof cannot be replayed. The SHA-256 digest is split into two 128-bit halves |
+| Q14 | Registry size | Depth 10 (1,024 devices); demo registry filled with ~20 fictitious devices. To say: anonymity grows with the number of devices |
+| Q15 | `zk/` tool | Dev A delivers `keygen`, `root`, `prove`, `verify` (+ metadata). Dev B uses them in the setup script and publishes the root (memo `veripress/registry-root/v1`); `XrplLedger.registry_root_at(time)` |
+| Q16 | Metadata commitment | At signing: EXIF `DateTimeOriginal` + GPS → `meta_commitment = Poseidon(unix time, lat×10⁶, lon×10⁶, salt)` in the signed manifest. Secret salt. No EXIF = no commitment |
+| Q17 | Proven claims | Generated at signing: "taken on day D" (24 h) and "within a ~10 km area around …". Never the exact time or GPS. On-demand proofs = future work (would require authenticating the owner) |
+| Q18 | JSON contract | `/api/verify`: `anonymous`, `zk`, `meta_claims`, `pending`, `credential_revoked_at`. `/api/sign`: `anonymous`. First phase-2 pull request, before the code |
+| Q19 | Demo | New steps: anonymous signing, then the day and area claims |
+| Q20 | C2PA and format | C2PA manifest in the metadata of the published PNG, not in the pixels, so the trees do not change. Pitch moment: "C2PA disappears after WhatsApp, VeriPress still finds the provenance" |
 
-### Tour 2 — détails ZK, métadonnées, contrat, démo
+### Round 3: passkey and organisation
 
-| # | Question | Décision |
+| # | Question | Decision |
 |---|---|---|
-| Q13 | Nullifier | **Pas de nullifier** : le digest du manifeste est une entrée publique, et la signature vérifiée dans le circuit porte dessus, donc pas de rejeu. Le digest SHA-256 est découpé en deux moitiés de 128 bits. |
-| Q14 | Taille du registre | Profondeur 10 (1 024 appareils) ; registre de démo rempli avec ~20 appareils fictifs. À dire : l'anonymat croît avec le nombre d'appareils. |
-| Q15 | Outil `zk/` | Dev A livre `keygen`, `root`, `prove`, `verify` (+ métadonnées). Dev B s'en sert dans le script de mise en place et publie la racine (Memo `veripress/registry-root/v1`). `XrplLedger.registry_root_at(time)`. |
-| Q16 | Engagement des métadonnées | À la signature : EXIF `DateTimeOriginal` + GPS → `meta_commitment = Poseidon(heure unix, lat×10⁶, lon×10⁶, sel)` dans le manifeste signé. Sel secret. Pas d'EXIF = pas d'engagement. |
-| Q17 | Affirmations prouvées | Générées à la signature : « prise le jour J » (24 h) et « dans une zone de ~10 km autour de *ville* ». Jamais l'heure ni le GPS exacts. Preuves à la demande = travail futur (il faudrait authentifier le propriétaire). |
-| Q18 | Contrat JSON | `/api/verify` : `anonymous`, `zk`, `meta_claims`, `pending` (+ `credential_revoked_at`). `/api/sign` : champ `anonymous`. Première PR de la phase 2, avant le code. |
-| Q19 | Démo | Nouvelles étapes 7 (signature anonyme) et 8 (affirmations jour et zone), entre l'IA et la révocation. |
-| Q20 | C2PA et format | Manifeste C2PA dans les métadonnées du PNG publié, hors pixels, donc les arbres ne changent pas. Moment du pitch : « C2PA disparaît après WhatsApp, VeriPress retrouve la provenance ». |
+| Q21 | Linking the passkey to the XRPL account | The registry **attests the passkey**: SHA-256 of the P-256 public key in the `URI` of the `CAPTURE_DEVICE` Credential. The server verifies the WebAuthn assertion (ECDSA P-256, `cryptography`). The URI format later moved from hex to base64url so it could also hold the ML-DSA key within XRPL's 128-byte limit |
+| Q22 | HTTPS for the demo | Passkey shown **on the laptop** (localhost + Touch ID). HTTPS tunnel for the phone only if time remains |
+| Q23 | Passkey + anonymous | Incompatible (a passkey cannot produce a Baby Jubjub key): passkey = named mode only. P-256 circuits = future work |
+| Q24 | Public link `/v/<tx>` | Read-only page: published image, verdict, proven claims, explorer link, social preview tags |
+| Q25 | Organisation | One pull request per feature, merged by its author once green, and announced. Sync points ~19:00, ~23:00, ~03:00, 08:00; freeze at 10:00 |
 
-### Tour 3 — passkey et organisation
+---
 
-| # | Question | Décision |
-|---|---|---|
-| Q21 | Relier la passkey au compte XRPL | Le registre **atteste la passkey** : hash de la clé publique P-256 dans le champ `URI` du Credential `CAPTURE_DEVICE`. Le serveur vérifie l'assertion WebAuthn (ECDSA P-256, `cryptography`). |
-| Q22 | HTTPS pour la démo | Passkey démontrée **sur le portable** (localhost + Touch ID). Tunnel HTTPS pour le téléphone seulement s'il reste du temps. |
-| Q23 | Passkey + anonyme | Incompatibles (la passkey ne peut pas produire de clé Baby Jubjub) : passkey = mode nominatif uniquement. Circuits P-256 = travail futur. |
-| Q24 | Lien public `/v/<tx>` | Page en lecture seule : image publiée, verdict, affirmations prouvées, lien vers l'explorateur, balises d'aperçu pour les réseaux sociaux. |
-| Q25 | Organisation | PR 1 (Dev A) = contrat de la phase 2 + plan et fiches. Puis une PR par fonctionnalité, fusionnée par son auteur une fois au vert, et annoncée. Synchro ~19:00, ~23:00, ~03:00, 08:00 ; gel à 10:00. |
+## Added after the Track 1 slides (Fri evening)
+
+Inspired by Apple's *Reference Image* design, but anchored on a public ledger:
+
+| Topic | Decision |
+|---|---|
+| Time window [T0, T1] | The manifest commits to the hash of the latest validated XRPL ledger (T0: signed after); the anchor's ledger close time is T1 |
+| RAW negative → reference JPEG | `op = develop`: the device signs its RAW, then its own JPEG development with the RAW as parent; 🟢 only if both are signed by the same named device |
+| Hybrid post-quantum signature | Ed25519 + **ML-DSA-87** (FIPS 204), key attested by the registry in the Credential URI; once declared in a manifest, the ML-DSA signature is mandatory (no downgrade); never in anonymous mode |
+| Security review | One review per side (signature / pipeline, then XRPL / API), see [`security-review.md`](security-review.md) |

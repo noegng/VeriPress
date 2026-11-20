@@ -1,61 +1,62 @@
-# Revue de sécurité — phase 2 (Dev A, ven. 20/11 ~19 h)
+# Security review
 
-Périmètre : verdict final, signature nominative / anonyme (ZK) / passkey (WebAuthn), chaîne de versions et `develop`, métadonnées prouvées, T0, C2PA, store. La partie XRPL (`XrplLedger`, script) est revue par Dev B.
+Two reviews were run before the feature freeze (Fri 20 Nov): one on the signature and verification side (Dev A, ~19:00), one on the XRPL and API side (Dev B, ~21:00). This document merges them. Mechanisms are described in [`architecture.md`](architecture.md).
 
-## Modèle de menace retenu
+## Threat model
 
-- L'attaquant contrôle les fichiers qu'il fait vérifier, le **store** hors chaîne et ses propres transactions XRPL : n'importe qui peut envoyer un Memo au compte registre.
-- Il **ne** contrôle **ni** la clé d'un appareil accrédité, **ni** la passkey attestée, **ni** le compte registre.
-- Il peut aussi être **un appareil accrédité malveillant** qui contourne notre client.
+- The attacker controls the files they submit for verification, the **off-chain store**, and their own XRPL transactions: anyone can send a memo to the registry account.
+- The attacker does **not** control the key of an accredited device, its attested passkey, or the registry account.
+- The attacker may also be **a malicious accredited device** that bypasses our client.
 
-## Ce qui tient (vérifié par des tests)
+## What holds (covered by tests)
 
-| Propriété | Mécanisme | Tests |
+### Signature and verification
+
+| Property | Mechanism | Tests |
 |---|---|---|
-| Un ancrage forgé ne vaut rien | Chaque mode exige sa preuve liée au digest ancré : Ed25519, Groth16 (digest en entrée publique), assertion WebAuthn (challenge = digest) | `test_pipeline`, `test_zk_anonymous`, `test_passkey` |
-| Le store n'est pas digne de confiance | Manifeste == digest ancré ; divulgation == racines de Merkle ; preuves == hash ancré | `test_*tampered*`, `test_manifest_swapped…` |
-| Pas de rejeu de preuve | Preuve ZK et assertion liées au digest ; paquet de preuve haché dans l'ancrage | `test_valid_proof_reanchored…`, `test_tampered_assertion_bundle…` |
-| Révocation non rétroactive | Date du Credential (nominatif) ou racine en vigueur à l'ancrage (anonyme) | `test_device_revoked_*`, `test_revocation_after_anchoring…` |
-| Masquage honnête | Une tuile « masquée » doit vraiment être noire ; au-delà de 50 % masqué -> ⚪ | `test_fully_redacted_record…` |
-| Passkey | Clé = celle du manifeste et attestée par le registre ; challenge, type, origine, rpIdHash, UP + UV, credential_id | `test_invalid_assertions_are_refused` (5 cas) |
-| Métadonnées | Preuve liée à l'engagement du manifeste signé ; libellé recalculé depuis les entrées publiques ; masquée si ⚪ | `test_zk_metadata` |
+| A forged anchor is worthless | Each mode requires its proof, bound to the anchored digest: Ed25519 signature, Groth16 proof (digest as a public input), WebAuthn assertion (challenge = digest) | `test_pipeline`, `test_zk_anonymous`, `test_passkey` |
+| The store is not trusted | Manifest = anchored digest; disclosure = signed Merkle roots; proof bundles = anchored hash | `test_*tampered*`, `test_manifest_swapped…` |
+| No proof replay | ZK proof and assertion bound to the digest; proof bundle hashed in the anchor | `test_valid_proof_reanchored…`, `test_tampered_assertion_bundle…` |
+| Non-retroactive revocation | Credential date (named mode) or registry root in force at anchor time (anonymous mode) | `test_device_revoked_*`, `test_revocation_after_anchoring…` |
+| Honest redaction | A "redacted" tile must really be black; more than 50 % redacted → ⚪ | `test_fully_redacted_record…` |
+| Passkey | Key = the one in the manifest and attested by the registry; challenge, type, origin, rpIdHash, user presence + verification, credential id | `test_invalid_assertions_are_refused` (5 cases) |
+| Metadata claims | Proof bound to the commitment in the signed manifest; label recomputed from the public inputs; hidden when ⚪ | `test_zk_metadata` |
+| Post-quantum | A manifest that declares an ML-DSA key requires its signature and attestation: deletion, tampering, key substitution and withdrawn attestation all fail | `test_post_quantum` |
+| Copied watermark | Record found by watermark with more than half the tiles changed → ⚪ | `test_pipeline` |
 
-## Constats de cette revue (corrigés dans la PR « Revue de sécurité »)
+### XRPL and API
 
-1. **`_history` ne savait vérifier que les signatures Ed25519** (bug, gravité moyenne). Un parent signé anonymement ou par passkey était toujours « non vérifié » : un RAW signé par Touch ID puis développé en JPEG tombait à tort en 🟠. → Une seule fonction `_authenticate`, propre à chaque mode, sert au verdict **et** à chaque étape de la chaîne.
-2. **`develop` anonyme** (gravité moyenne, révélée par le correctif 1). En anonyme, les deux signataires valent `""`, donc « même appareil » était vrai par construction. Un appareil accrédité qui contourne notre client aurait pu présenter le RAW anonyme d'un autre comme son négatif. → `develop` exige un signataire nominatif des deux côtés, à la vérification comme à la signature, avec un motif explicite.
-3. **Identifiants d'entrée non validés dans le store** (faible). Le `parent` d'un manifeste signé pouvait viser un chemin hors du store (`../`), en lecture seule. → `store.valid_id` : uniquement `hash` ou `hash-rN`.
+No exploitable vulnerability found.
 
-## Points connus, non corrigés (assumés et dits au jury)
-
-- **C2PA** : un manifeste C2PA peut être fabriqué par n'importe qui pour pointer vers n'importe quel ancrage (certificat non reconnu). → Dans la page : à présenter comme une **information**, jamais comme une preuve (le verdict vient de VeriPress).
-- **Circuit `device`** : pas de séparation de domaine entre le hash d'une feuille (`Poseidon(Ax, Ay)`) et celui d'un nœud de l'arbre. Non exploitable : profondeur fixe à 10, et la clé doit être un point de la courbe. Durcissement prévu : `Poseidon(3)` avec une étiquette de domaine.
-- **Cérémonie de confiance** : phase 1 publique (PSE, 80 contributions) ; phase 2 = une seule contribution locale. En production : cérémonie multi-parties, ou PLONK / Halo2.
-- **WebAuthn** : compteur de signature non suivi (détection de clonage). Les passkeys Apple synchronisées renvoient de toute façon 0. Côté vérificateur, `VERIPRESS_WEBAUTHN_HOSTS` doit lister les origines de signature.
-- **Attestation de la passkey** relue dans l'état *actuel* du Credential : réattester une autre passkey invalide les anciennes photos signées par passkey (`tasks-dev-b.md`).
-- **Origine physique** : la signature se fait encore côté serveur (clé logicielle) ou par passkey sur le portable ; un capteur qui signe le RAW, comme chez Apple, reste du travail futur. Le trou analogique (photographier un écran) est inhérent à toute approche par signature.
-- **Post-quantique (mis à jour 20/11 ~18 h 45)** : la signature du manifeste est désormais **hybride Ed25519 + ML-DSA-87** (FIPS 204), clé attestée par le registre et signature obligatoire dès qu'elle est déclarée (`test_post_quantum.py` : suppression, falsification, substitution de clé, attestation retirée). Restent non post-quantiques : les preuves Groth16 sur BN254 (leur **validité** ; l'anonymat, en zero-knowledge parfait, tient), la passkey P-256 (les navigateurs n'ont pas encore de passkeys post-quantiques), la signature C2PA (ES256) et les signatures de comptes XRPL. Une fois le « Q-day » arrivé, la chronologie XRPL empêche toujours d'antidater une fausse signature.
-
-## Partie XRPL (Dev B, ven. 20/11 ~21 h)
-
-Périmètre : `XrplLedger` (ancrages, lecture des Memos, Credentials, registre anonyme, T0, lots, attestations dans l'URI), `scripts/setup_testnet.py`, et les routes de l'API : enregistrement de la passkey, `/v/<id>`, `/api/anchor`, `/api/sign/batch`, `c2pa` dans `/api/verify`. Même modèle de menace que ci-dessus : n'importe qui peut envoyer des transactions et des Memos au compte registre. **Aucune vulnérabilité exploitable trouvée.**
-
-| Propriété | Mécanisme | Tests |
+| Property | Mechanism | Tests |
 |---|---|---|
-| Racine du registre non falsifiable | Seuls les `AccountSet` **envoyés par le compte registre** (`Account == registry`) comptent. Un Memo `registry-root` envoyé par un tiers est ignoré | `test_ledger_registry` |
-| Credentials non falsifiables | `CredentialCreate` doit venir du registre, `CredentialAccept` du sujet (après un Create) ; un Create d'un autre compte est ignoré ; seules les transactions validées et `tesSUCCESS` comptent | `test_ledger_revocation` |
-| Clés attestées (passkey, ML-DSA-87) | Lues dans le `CredentialCreate` **du registre** en vigueur (historique) ; un Create d'un autre compte est ignoré ; une révocation n'efface pas l'attestation (c'est `credential_type(pk, t)` qui juge la validité) | `test_ledger_pq` |
-| T0 non falsifiable | `ledger_close_time` redemande le ledger validé à cet index et compare son hash. Faux hash, ledger futur ou non validé : `None`. Seuls les ledgers validés sont mis en cache | `test_ledger_time_window`, Testnet |
-| Racine de lot sans valeur seule | `n` non entier ou ≤ 0 : ignoré. Une racine ancrée par un tiers n'atteste rien : chaque reçu doit contenir une signature, une preuve ZK ou une passkey valides (`batching.py`) | `test_ledger_batch`, `test_batch` |
-| Ancrage non validé | Horodaté à la soumission ou au présent, jamais à une date fournie par l'attaquant : la révocation est donc évaluée au présent ; verdict « pending » | `test_fast_anchoring_flag_and_anchor_status` |
-| Soumissions sûres | Aucune nouvelle tentative de soumission (risque de double ancrage) ; numéro de séquence sous verrou | Testnet (deux ancrages à la suite) |
-| Page publique | Rapport JSON dans `<script>` avec `<` échappé ; balises OG passées par `html.escape` ; `innerHTML` seulement via `esc()` / `Number()` ; `entry_id` validé par regex ; C2PA affiché comme information, sans effet sur le verdict | `test_public_page_escapes_a_hostile_report`, `test_forged_c2pa_manifest_does_not_change_the_verdict` |
-| Enregistrement de la passkey | Réservé à localhost (pair TCP ; uvicorn n'accepte `X-Forwarded-For` que d'un pair 127.0.0.1). La route n'écrit qu'une **candidate** : seul l'opérateur l'atteste (`--passkey`) | `test_passkey_registration_is_localhost_only` |
+| Registry root cannot be forged | Only `AccountSet` transactions **sent by the registry account** count; a `registry-root` memo from anyone else is ignored | `test_ledger_registry` |
+| Credentials cannot be forged | `CredentialCreate` must come from the registry, `CredentialAccept` from the subject (after a Create); only validated `tesSUCCESS` transactions count | `test_ledger_revocation` |
+| Attested keys (passkey, ML-DSA-87) | Read from the registry's `CredentialCreate` in force, in the history; a revocation does not erase the attestation (validity is judged by `credential_type(pk, t)`) | `test_ledger_pq` |
+| T0 cannot be forged | `ledger_close_time` re-reads the validated ledger at that index and compares its hash; wrong hash, future or unvalidated ledger → none | `test_ledger_time_window`, Testnet |
+| A batch root alone is worthless | Non-integer or ≤ 0 counts are ignored. A root anchored by a third party attests nothing: each receipt must contain a valid signature, ZK proof or passkey assertion | `test_ledger_batch`, `test_batch` |
+| Unvalidated anchor | Timestamped at submission or now, never at an attacker-chosen date, so revocation is evaluated at the present time; verdict flagged `pending` | `test_fast_anchoring_flag_and_anchor_status` |
+| Safe submission | No automatic resubmission (risk of double anchoring); sequence number under a lock | Testnet |
+| Public page | JSON report in `<script>` with `<` escaped; Open Graph tags through `html.escape`; `innerHTML` only via `esc()` / `Number()`; `entry_id` checked by regex; C2PA shown as information only | `test_public_page_escapes_a_hostile_report`, `test_forged_c2pa_manifest_does_not_change_the_verdict` |
+| Passkey registration | Localhost only (TCP peer; uvicorn trusts `X-Forwarded-For` only from 127.0.0.1). The route only writes a **candidate**: the operator attests it (`--passkey`) | `test_passkey_registration_is_localhost_only` |
 
-### Points connus, non corrigés (assumés et dits au jury)
+## Findings fixed during the review
 
-- **L'« appareil » de la démo, c'est le serveur.** `/api/sign` et `/api/sign/batch` signent avec la clé logicielle de l'appareil pour quiconque joint le serveur (lancé sur `0.0.0.0` pour le téléphone). Sur le Wi-Fi de la salle, n'importe qui pourrait donc produire une photo 🟢 « appareil accrédité ». En production, la clé vit dans le capteur, ou c'est la passkey de l'appareil. Pendant la démo, ne pas afficher l'adresse IP du serveur, ou le lancer sur `127.0.0.1` si le téléphone n'est pas nécessaire.
-- **Tunnel public** (par exemple pour les aperçus sociaux) : les requêtes arriveraient alors de 127.0.0.1, et l'enregistrement de la passkey ne serait plus réservé à la machine. Ne pas ouvrir de tunnel pendant l'enregistrement ou l'attestation d'une passkey.
-- **Lecture par un nœud public Testnet de confiance**, sans preuve d'état : un nœud malveillant pourrait mentir. En production : son propre nœud, ou plusieurs nœuds recoupés.
-- **Attestation lue dans le dernier `CredentialCreate`** quand `at_time` n'est pas fourni : réattester une autre passkey ou une autre clé ML-DSA invalide les anciennes photos. Le pipeline peut passer `at_time=anchor.timestamp` pour lever cette limite (proposé à Dev A, #41). Ce point remplace « relue dans l'état *actuel* » ci-dessus : depuis #41, une révocation ne l'efface plus.
-- **Clés de démo en clair dans `keys/`** (`chmod 600`, jamais commitées). En production : HSM ou enclave sécurisée.
+1. **The version chain only verified Ed25519 signatures** (medium). A parent signed anonymously or with a passkey was always "unverified", so a RAW signed with Touch ID and then developed to JPEG wrongly came out 🟠. → A single per-mode `_authenticate` function now serves the verdict **and** every step of the chain.
+2. **Anonymous `develop`** (medium, revealed by fix 1). In anonymous mode both signers are `""`, so "same device" was true by construction: an accredited device bypassing our client could present someone else's anonymous RAW as its negative. → `develop` requires a named signer on both sides, at signing and at verification.
+3. **Entry ids not validated in the store** (low). The `parent` of a signed manifest could point outside the store (`../`), read-only. → `store.valid_id`: only `hash` or `hash-rN`.
+
+## Known limits, accepted and stated to the jury
+
+- **C2PA** manifests can be forged by anyone to point to any anchor (our certificate is a test one). The page presents C2PA as **information**, never as proof; the verdict comes from VeriPress.
+- **Demo device = the server.** `/api/sign` signs with the device's software key for anyone who reaches the server. On the venue Wi-Fi anyone could produce a 🟢 photo. In production the key lives in the camera sensor, or is the device's passkey. During the demo: do not show the server address, or bind to `127.0.0.1` when the phone is not needed.
+- **Physical origin.** Signing happens on the server (software key) or with a passkey on the laptop; a sensor that signs the RAW itself, as Apple does, is future work. The **analog hole** (photographing a screen) affects every signature-based approach.
+- **`device` circuit**: no domain separation between a leaf hash (`Poseidon(Ax, Ay)`) and an inner node hash. Not exploitable: the depth is fixed at 10 and the key must be a curve point. Planned hardening: `Poseidon(3)` with a domain tag.
+- **Trusted setup**: public phase 1 (PSE, 80 contributions), single local phase-2 contribution. Production: multi-party ceremony, or PLONK / Halo2.
+- **WebAuthn signature counter** not tracked (clone detection); synced Apple passkeys return 0 anyway. Verifiers must list the signing origins in `VERIPRESS_WEBAUTHN_HOSTS`.
+- **Attestation read from the latest `CredentialCreate`** when no time is given: attesting a new passkey or ML-DSA key would invalidate older photos signed with the previous one. Passing `at_time = anchor.timestamp` removes this limit (proposed in PR #41).
+- **Public tunnel**: requests would then come from 127.0.0.1, so passkey registration would no longer be restricted to the machine. Do not open a tunnel while registering or attesting a passkey.
+- **Trusted public Testnet node**, without state proofs: a malicious node could lie. Production: own node, or several nodes cross-checked.
+- **Demo keys in clear** in `keys/` (`chmod 600`, never committed). Production: HSM or secure enclave.
+- **Post-quantum coverage**: the manifest signature is hybrid Ed25519 + ML-DSA-87. Still classical: Groth16 soundness on BN254 (anonymity, being perfect zero-knowledge, holds), P-256 passkeys (browsers have no post-quantum passkeys yet), the C2PA ES256 signature, XRPL account signatures. After "Q-day", the XRPL timeline still prevents back-dating a forged signature.
+- **Perceptual features are attackable**: they only localise changes and find records. Authentication always comes from the signature over the roots.
