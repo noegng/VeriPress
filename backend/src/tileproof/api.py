@@ -22,11 +22,12 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from . import pipeline, watermark
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
 from .store import Store
+from .tiling import load_rgb
 
 try:  # iPhone photos are HEIC
     from pillow_heif import register_heif_opener
@@ -92,9 +93,8 @@ async def read_image(upload: UploadFile) -> np.ndarray:
         img = Image.open(io.BytesIO(data))
         if img.width * img.height > MAX_PIXELS:
             raise HTTPException(413, "image too large (max 40 MP)")
-        # Phones store photos rotated + an EXIF flag; apply it so pixels match what users see.
-        img = ImageOps.exif_transpose(img)
-        return np.asarray(img.convert("RGB"))
+        # EXIF orientation + ICC -> sRGB (iPhone photos are Display P3, WhatsApp re-encodes in sRGB).
+        return load_rgb(img)
     except (UnidentifiedImageError, OSError, ValueError) as e:
         raise HTTPException(400, f"not a readable image: {e}") from e
 
