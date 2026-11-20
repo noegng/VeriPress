@@ -1,0 +1,79 @@
+import numpy as np
+import pytest
+from conftest import jpeg, rescale
+
+from tileproof.commitment import Disclosure, TileStatus, Verdict, commit, redact, verify
+
+SEED = b"s" * 32
+
+
+def edit_box(rgb: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+    out = rgb.copy()
+    out[y0:y1, x0:x1] = (255, 0, 255)  # paste a flat magenta patch
+    return out
+
+
+def test_untouched_image_is_intact(photo):
+    m, d = commit(photo, SEED)
+    res = verify(photo, m, d)
+    assert res.verdict == Verdict.INTACT
+    assert set(res.statuses) == {TileStatus.EXACT}
+    assert len(res.statuses) == 20 * 15  # 640x480 in 32px tiles
+
+
+@pytest.mark.parametrize("quality", [50, 70, 90])
+def test_jpeg_recompression_is_recompressed_not_edited(photo, quality):
+    m, d = commit(photo, SEED)
+    res = verify(jpeg(photo, quality), m, d)
+    assert res.verdict == Verdict.RECOMPRESSED
+    assert TileStatus.CHANGED not in res.statuses
+
+
+def test_half_scale_then_jpeg_is_still_recompressed(photo):
+    m, d = commit(photo, SEED)
+    res = verify(jpeg(rescale(photo, 0.5), 80), m, d)
+    assert res.verdict == Verdict.RECOMPRESSED
+
+
+def test_local_edit_flags_exactly_the_edited_tiles(photo):
+    m, d = commit(photo, SEED)
+    edited = edit_box(photo, 64, 96, 160, 192)  # tiles cols 2-4, rows 3-5
+    res = verify(jpeg(edited, 85), m, d)
+    assert res.verdict == Verdict.EDITED
+    changed = {i for i, s in enumerate(res.statuses) if s == TileStatus.CHANGED}
+    expected = {r * 20 + c for r in range(3, 6) for c in range(2, 5)}
+    assert changed == expected
+
+
+def test_redacted_tiles_are_authenticated_and_hidden(photo):
+    m, d = commit(photo, SEED)
+    out, d2 = redact(photo, m, d, {0, 1, 21})
+    assert (out[0:32, 0:64] == 0).all()
+    res = verify(out, m, d2)
+    assert res.exact_root_ok and res.robust_root_ok
+    assert [i for i, s in enumerate(res.statuses) if s == TileStatus.REDACTED] == [0, 1, 21]
+    assert res.verdict == Verdict.INTACT
+    hidden = {t.i: t for t in d2.tiles}
+    assert hidden[0].salt is None and hidden[0].f is None  # nothing about the content leaks
+
+
+def test_tampered_disclosure_is_invalid(photo):
+    m, d = commit(photo, SEED)
+    data = d.to_dict()
+    data["tiles"][5]["f"][0] += 1  # forge a committed feature
+    res = verify(photo, m, Disclosure.from_dict(data))
+    assert res.verdict == Verdict.INVALID_DISCLOSURE
+
+
+def test_disclosure_from_another_image_is_invalid(photo):
+    from conftest import photo_like
+
+    m, _ = commit(photo, SEED)
+    _, other = commit(photo_like(seed=1), SEED)
+    assert verify(photo, m, other).verdict == Verdict.INVALID_DISCLOSURE
+
+
+def test_different_seeds_give_different_roots_for_same_image(photo):
+    m1, _ = commit(photo, SEED)
+    m2, _ = commit(photo, b"t" * 32)
+    assert m1.exact_root != m2.exact_root
