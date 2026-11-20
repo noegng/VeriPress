@@ -95,6 +95,10 @@ Contrat dans `interfaces.md` § « Ancrage groupé ». À faire dans `XrplLedger
 
 Option côté page : un mode « lot » (plusieurs fichiers, puis « Anchor batch »), et afficher `batch` (« ancrée dans le lot <tx>, n° i sur N »).
 
+## Revue de ta PR #32 (Dev A, 20/11 ~18 h 15)
+
+T0 côté XRPL : conforme, et vérifié sur Testnet (bon hash → heure de clôture ; hash faux ou ledger futur → `None`). Un accroc : en résolvant le conflit avec la PR #31 (commit `c2a63a7`), **le stub `XrplLedger.anchor_batch` a été supprimé**. Le protocole, `FakeLedger` et `Anchor.batch_size` sont intacts, mais un `BatchingLedger.flush()` sur Testnet lève maintenant une `AttributeError` au lieu d'un message clair. → Implémente directement `anchor_batch` (§ « Ancrage groupé » plus haut), ou remets le stub en attendant.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. ~13 h — phase 1 :** script Testnet, `XrplLedger`, API (branchée sur le vrai pipeline), page (signer / vérifier, heatmap, masquage, arbre ↔ image, historique, lien public), retours de revue 1–7. Répétition complète en `xrpl` + filigrane : les 6 étapes passent.
