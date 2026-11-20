@@ -21,6 +21,8 @@
   h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; }
   h1 span { color: var(--accent); }
   .tag { color: var(--muted); font-size: 14px; }
+  .pill { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.warn { border-color: #f59f00; color: #f59f00; }
   ol.history { list-style: none; padding: 0; margin: 8px 0 0; border-left: 2px solid var(--line); }
   ol.history li { position: relative; padding: 4px 0 8px 16px; font-size: 14px; }
   ol.history li::before { content: ""; position: absolute; left: -6px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
@@ -85,6 +87,7 @@
   <header>
     <h1>Tile<span>Proof</span></h1>
     <span class="tag">Image provenance anchored on XRPL</span>
+    <span class="pill" id="status" hidden></span>
   </header>
 
   <div class="tabs" role="tablist">
@@ -181,6 +184,21 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// Readiness pill: which ledger, and whether TrustMark has finished loading (check before demoing).
+async function pollStatus() {
+  try {
+    const h = await fetch("/api/health").then((r) => r.json());
+    const net = h.ledger === "XrplLedger" ? "⛓️ XRPL Testnet" : "offline ledger";
+    const wm = !h.watermark ? "watermark off" : { ready: "watermark ready", loading: "loading watermark…", failed: "watermark failed" }[h.watermark_ready] || "watermark";
+    const s = $("status");
+    s.textContent = `${net} · ${wm}`; s.hidden = false;
+    s.classList.toggle("warn", h.ledger !== "XrplLedger" || (h.watermark && h.watermark_ready !== "ready"));
+    if (h.watermark && h.watermark_ready === "loading") setTimeout(pollStatus, 3000);
+  } catch { setTimeout(pollStatus, 5000); }
+}
+pollStatus();
+
 const VERDICTS = {
   real:    { dot: "🟢", title: "Real",         cls: "v-real" },
   edited:  { dot: "🟠", title: "Edited",       cls: "v-edited" },
@@ -230,9 +248,9 @@ picker("verifyDrop", "verifyFile", (f) => {
   showPreview($("verifyPreview"), f);
 });
 
-async function post(url, form, btn, errEl) {
+async function post(url, form, btn, errEl, busy = "Working…") {
   const label = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Working…'; errEl.textContent = "";
+  btn.disabled = true; btn.innerHTML = `<span class="spin"></span>${esc(busy)}`; errEl.textContent = "";
   try {
     const r = await fetch(url, { method: "POST", body: form });
     const body = await r.json().catch(() => ({}));
@@ -250,7 +268,8 @@ $("signBtn").addEventListener("click", async () => {
   fd.append("signer", document.querySelector("input[name=signer]:checked").value);
   const parent = $("parentInput").value.trim();
   if (parent) fd.append("parent", parent);
-  const res = await post("/api/sign", fd, $("signBtn"), $("signErr"));
+  const busy = $("status").textContent.startsWith("⛓️") ? "Anchoring on XRPL (~10 s)…" : "Signing…";
+  const res = await post("/api/sign", fd, $("signBtn"), $("signErr"), busy);
   if (!res) return;
   const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(res.explorer_url || "");
   $("signWhen").textContent = onChain

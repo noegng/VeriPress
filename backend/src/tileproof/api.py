@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,7 +30,8 @@ from .signing import keys_dir
 from .store import Store
 from .tiling import load_upload
 
-log = logging.getLogger("tileproof.api")
+log = logging.getLogger("uvicorn.error")  # configured by uvicorn; our own logger would print nothing
+WARM = {"state": "off"}  # off | loading | ready | failed — shown by /api/health and the page
 BACKEND = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_UPLOAD = 100 * 1024 * 1024  # camera RAW (CR3, ProRAW DNG…) is often 25-80 MB
@@ -69,11 +71,16 @@ def make_ledger() -> Ledger:
 
 
 def _warm_up() -> None:
+    WARM["state"] = "loading"
+    log.info("TileProof: loading TrustMark watermark models (first run downloads them, ~3 min)…")
+    t0 = time.monotonic()
     try:
         watermark.warm_up()
-        log.info("watermark models ready")
+        WARM["state"] = "ready"
+        log.info("TileProof: watermark models ready in %.0f s", time.monotonic() - t0)
     except Exception:  # noqa: BLE001 — the API still works, sign/verify will retry the load
-        log.exception("watermark warm-up failed")
+        WARM["state"] = "failed"
+        log.exception("TileProof: watermark warm-up failed")
 
 
 @asynccontextmanager
@@ -113,7 +120,12 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "ledger": type(app.state.ledger).__name__, "watermark": watermark.enabled()}
+    return {
+        "ok": True,
+        "ledger": type(app.state.ledger).__name__,
+        "watermark": watermark.enabled(),
+        "watermark_ready": WARM["state"],
+    }
 
 
 @app.post("/api/preview")
