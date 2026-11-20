@@ -273,3 +273,13 @@ def test_fully_redacted_record_cannot_vouch_for_an_arbitrary_image(photo, ledger
     report, _ = verify_image(png_to_rgb(red_png), ledger, store, entry_id=rid)
     assert report.verdict == FinalVerdict.UNKNOWN  # nothing left to authenticate
     assert "redacted" in report.reason.lower()
+
+
+def test_unwatermarked_original_of_a_signed_photo_is_real(photo, ledger, store):
+    """Review finding: the gallery original (no watermark) came out 'edited' — the watermark
+    residual exceeded the tolerance in some tiles."""
+    signed, _ = sign_image(photo, "device", ledger, store)
+    for received in (photo, jpeg(rescale(photo, 0.5), 70)):
+        report, _ = verify_image(received, ledger, store, entry_id=signed.entry_id)
+        assert report.verdict == FinalVerdict.REAL, report.reason
+        assert "original" in report.reason.lower()

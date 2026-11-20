@@ -117,11 +117,12 @@ def sign_image(
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
     `parent`: tx hash of the signed version this image was edited from (version chain)."""
     key = load_key(signer)
-    wm_id = b""
+    wm_id, original = b"", None
     if watermark.enabled():
-        wm_id = os.urandom(8)
-        rgb = watermark.embed(rgb, wm_id)  # commit covers the watermarked pixels
-    manifest, disclosure = commit(rgb, os.urandom(32))
+        wm_id, original = os.urandom(8), rgb
+        rgb = watermark.embed(rgb, wm_id)  # exact tree covers the watermarked pixels
+    # robust tree covers both versions: the gallery original must verify too
+    manifest, disclosure = commit(rgb, os.urandom(32), original=original)
     manifest.wm_id = wm_id.hex()
     manifest.signer = key.public_key
     manifest.op = "ai_generate" if signer == "ai" else ("edit" if parent else "capture")
@@ -187,7 +188,12 @@ def verify_image(
     elif credential in (CredentialType.AI_GENERATOR, CredentialType.CAPTURE_DEVICE):
         verdict = FinalVerdict.AI if credential == CredentialType.AI_GENERATOR else FinalVerdict.REAL
         c, n = tiles.counts(), len(tiles.statuses)
-        how = "identical" if tiles.verdict == Verdict.INTACT else "match after recompression"
+        if tiles.verdict == Verdict.INTACT:
+            how = "identical"
+        elif tiles.original_tiles * 2 >= n - c["redacted"]:
+            how = "match the original capture (unwatermarked)"
+        else:
+            how = "match after recompression"
         reason = f"Signed by a {credential.value} credential; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
             reason += f", {c['redacted']} redacted by the owner"

@@ -162,3 +162,50 @@ def test_thin_dark_lines_on_bright_background_survive_bicubic_downscale():
     small = Image.fromarray(rgb).resize((1200, 900), Image.Resampling.BICUBIC)  # 2x: tiles keep ~32 px
     res = verify(jpeg(np.asarray(small), 70), m, dis)
     assert TileStatus.CHANGED not in res.statuses
+
+
+def _fake_watermark(rgb: np.ndarray) -> np.ndarray:
+    """Stand-in for TrustMark at this seam: a structured low-amplitude residual."""
+    yy, xx = np.mgrid[0 : rgb.shape[0], 0 : rgb.shape[1]]
+    residual = (12 * np.sin(xx / 7.0) * np.cos(yy / 5.0))[..., None]
+    return np.clip(rgb.astype(float) + residual, 0, 255).astype(np.uint8)
+
+
+def test_dual_commit_accepts_both_the_published_and_the_original(photo):
+    marked = _fake_watermark(photo)
+    m, d = commit(marked, SEED, original=photo)
+    assert verify(marked, m, d).verdict == Verdict.INTACT
+    res = verify(photo, m, d)
+    assert TileStatus.CHANGED not in res.statuses
+    assert res.original_tiles > len(res.statuses) // 2
+
+
+def test_dual_commit_still_flags_edits_of_the_original(photo):
+    marked = _fake_watermark(photo)
+    m, d = commit(marked, SEED, original=photo)
+    res = verify(jpeg(edit_box(photo, 64, 96, 160, 192), 85), m, d)
+    changed = {i for i, s in enumerate(res.statuses) if s == TileStatus.CHANGED}
+    assert changed == {r * 20 + c for r in range(3, 6) for c in range(2, 5)}
+
+
+def test_forged_original_features_invalidate_the_disclosure(photo):
+    m, d = commit(_fake_watermark(photo), SEED, original=photo)
+    data = d.to_dict()
+    data["tiles"][7]["g"][0] += 3
+    assert verify(photo, m, Disclosure.from_dict(data)).verdict == Verdict.INVALID_DISCLOSURE
+    del data["tiles"][7]["g"]  # stripping the original's features is tampering too
+    assert verify(photo, m, Disclosure.from_dict(data)).verdict == Verdict.INVALID_DISCLOSURE
+
+
+def test_redaction_keeps_working_with_dual_commit(photo):
+    marked = _fake_watermark(photo)
+    m, d = commit(marked, SEED, original=photo)
+    out, d2 = redact(marked, m, d, {0, 1})
+    res = verify(out, m, d2)
+    assert res.robust_root_ok and res.statuses[0] == TileStatus.REDACTED
+    assert d2.tiles[0].g is None and d2.tiles[0].f is None  # nothing about hidden content leaks
+
+
+def test_original_of_another_size_is_rejected(photo):
+    with pytest.raises(ValueError):
+        commit(photo, SEED, original=photo[:-8])

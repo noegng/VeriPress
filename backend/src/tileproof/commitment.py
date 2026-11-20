@@ -71,6 +71,7 @@ class TileDisclosure:
     x: str  # exact leaf hash
     salt: str | None = None  # revealed tiles
     f: list[int] | None = None  # revealed tiles: committed features
+    g: list[int] | None = None  # revealed tiles: features of the unwatermarked original, if any
     r: str | None = None  # redacted tiles: robust leaf hash
 
     @property
@@ -105,20 +106,34 @@ def _exact_leaf(rgb: np.ndarray, grid: Grid, i: int, salt: bytes) -> bytes:
     return leaf_hash(EXACT_DOMAIN, i, salt, tile_pixels(rgb, grid, i).tobytes())
 
 
-def _robust_leaf(vec, i: int, salt: bytes) -> bytes:
-    return leaf_hash(ROBUST_DOMAIN, i, salt, F.feature_bytes(vec))
+def _robust_leaf(vec, i: int, salt: bytes, alt=None) -> bytes:
+    """Robust leaf over the committed features, plus those of the unwatermarked original when
+    the published image carries a watermark (both versions are authentic captures)."""
+    payload = F.feature_bytes(vec) + (F.feature_bytes(alt) if alt is not None else b"")
+    return leaf_hash(ROBUST_DOMAIN, i, salt, payload)
+
+
+def _alt(t: "TileDisclosure"):
+    return None if t.g is None else np.array(t.g)
 
 
 # ---------------------------------------------------------------- commit / redact
 
 
-def commit(rgb: np.ndarray, seed: bytes, tile: int | None = None) -> tuple[Manifest, Disclosure]:
+def commit(
+    rgb: np.ndarray, seed: bytes, tile: int | None = None, original: np.ndarray | None = None
+) -> tuple[Manifest, Disclosure]:
+    """`original`: the same picture before watermarking, so that it (and its shared copies)
+    also verifies; the exact tree covers `rgb` only."""
     tile = tile or auto_tile(rgb.shape[1], rgb.shape[0])
     grid = grid_for(rgb, tile)
     feats = F.quantized_features(rgb, grid)
     salts = [tile_salt(seed, i) for i in range(grid.count)]
     exact = [_exact_leaf(rgb, grid, i, salts[i]) for i in range(grid.count)]
-    robust = [_robust_leaf(feats[i], i, salts[i]) for i in range(grid.count)]
+    if original is not None and original.shape != rgb.shape:
+        raise ValueError("original must have the same size as the watermarked image")
+    alts = F.quantized_features(original, grid) if original is not None else [None] * grid.count
+    robust = [_robust_leaf(feats[i], i, salts[i], alts[i]) for i in range(grid.count)]
     manifest = Manifest(
         width=grid.width,
         height=grid.height,
@@ -128,7 +143,10 @@ def commit(rgb: np.ndarray, seed: bytes, tile: int | None = None) -> tuple[Manif
     )
     disclosure = Disclosure(
         tiles=[
-            TileDisclosure(i=i, x=exact[i].hex(), salt=salts[i].hex(), f=feats[i].tolist())
+            TileDisclosure(
+                i=i, x=exact[i].hex(), salt=salts[i].hex(), f=feats[i].tolist(),
+                g=None if alts[i] is None else alts[i].tolist(),
+            )
             for i in range(grid.count)
         ]
     )
@@ -146,7 +164,7 @@ def redact(
         if t.i in tiles and not t.redacted:
             x0, y0, x1, y1 = grid.bounds(t.i)
             out[y0:y1, x0:x1] = 0
-            r = _robust_leaf(np.array(t.f), t.i, bytes.fromhex(t.salt)).hex()
+            r = _robust_leaf(np.array(t.f), t.i, bytes.fromhex(t.salt), _alt(t)).hex()
             new_tiles.append(TileDisclosure(i=t.i, x=t.x, r=r))
         else:
             new_tiles.append(t)
@@ -177,6 +195,7 @@ class VerifyResult:
     distances: list[float]
     exact_root_ok: bool
     robust_root_ok: bool
+    original_tiles: int = 0  # tiles closer to the unwatermarked original than to the published image
 
     def counts(self) -> dict[str, int]:
         out = {s.value: 0 for s in TileStatus}
@@ -196,7 +215,7 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
     # 1. Authenticate the disclosure itself against the signed roots.
     exact_leaves = [bytes.fromhex(t.x) for t in tiles]
     robust_leaves = [
-        bytes.fromhex(t.r) if t.redacted else _robust_leaf(np.array(t.f), t.i, bytes.fromhex(t.salt))
+        bytes.fromhex(t.r) if t.redacted else _robust_leaf(np.array(t.f), t.i, bytes.fromhex(t.salt), _alt(t))
         for t in tiles
     ]
     exact_ok = MerkleTree(exact_leaves).root.hex() == manifest.exact_root
@@ -208,6 +227,7 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
     rgb = resize_to(rgb, grid.width, grid.height)
     raw = F.raw_features(rgb, grid)
     statuses: list[TileStatus] = []
+    original_tiles = 0
     distances: list[float] = []
     for t in tiles:
         if t.redacted:
@@ -219,11 +239,18 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
             distances.append(0.0 if hidden else float("inf"))
             continue
         dist = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.f]))[0])
+        if t.g is not None:  # closer to the unwatermarked original?
+            dist_g = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.g]))[0])
+            closer_to_original = dist_g < dist
+            dist = min(dist, dist_g)
+        else:
+            closer_to_original = False
         distances.append(dist)
         if _exact_leaf(rgb, grid, t.i, bytes.fromhex(t.salt)).hex() == t.x:
             statuses.append(TileStatus.EXACT)
         elif dist <= F.TOLERANCE:
             statuses.append(TileStatus.ROBUST)
+            original_tiles += closer_to_original
         else:
             statuses.append(TileStatus.CHANGED)
 
@@ -233,7 +260,7 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
         verdict = Verdict.RECOMPRESSED
     else:
         verdict = Verdict.INTACT
-    return VerifyResult(verdict, statuses, distances, exact_ok, robust_ok)
+    return VerifyResult(verdict, statuses, distances, exact_ok, robust_ok, original_tiles)
 
 
 # ---------------------------------------------------------------- visualisation
