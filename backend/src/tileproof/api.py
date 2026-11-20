@@ -24,7 +24,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from PIL import Image
-from . import pipeline, watermark
+from . import pipeline, watermark, zk
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
 from .signing import keys_dir
 from .store import Store
@@ -67,6 +67,13 @@ def make_ledger() -> Ledger:
         p = keys_dir() / f"{name}.json"
         if p.exists():
             ledger.issue(json.loads(p.read_text())["public_key"], ctype)
+    # ...and publish the anonymous registry root, as setup_testnet.py does on XRPL.
+    reg = keys_dir() / "registry_devices.json"
+    if reg.exists():
+        try:
+            ledger.publish_registry_root(zk.root(json.loads(reg.read_text())["pks"]), at=0)
+        except zk.ZkError as e:  # Node / zk deps missing: named signing still works offline
+            log.warning("TileProof: anonymous registry not loaded (%s)", e)
     return ledger
 
 
@@ -154,24 +161,39 @@ def files(name: str) -> FileResponse:
 
 
 @app.post("/api/sign")
-async def sign(image: UploadFile = File(...), signer: str = Form("device"), parent: str | None = Form(None)):
+async def sign(
+    image: UploadFile = File(...),
+    signer: str = Form("device"),
+    parent: str | None = Form(None),
+    anonymous: str | None = Form(None),
+):
     if signer not in ("device", "ai"):
         raise HTTPException(422, "signer must be device|ai")
     parent = (parent or "").strip().upper() or None
     if parent and not PARENT.match(parent):
         raise HTTPException(422, "parent must be a tx hash")
+    anon = (anonymous or "").strip().lower() in ("1", "true", "on")
     rgb = await read_image(image)
     try:
         result, _png = await run_in_threadpool(
-            pipeline.sign_image, rgb, signer, app.state.ledger, app.state.store, parent
+            lambda: pipeline.sign_image(rgb, signer, app.state.ledger, app.state.store, parent, anonymous=anon)
         )
     except FileNotFoundError as e:  # keys/ missing
         raise HTTPException(503, f"signing key missing — run scripts/setup_testnet.py ({e.filename})") from e
-    except ValueError as e:  # pipeline: "unknown parent …" (not anchored / not in the store)
+    except ValueError as e:  # pipeline: unknown parent, AI key or device not in the anonymous registry…
         raise HTTPException(422, str(e)) from e
+    except zk.ZkError as e:  # Node / zk deps missing (a RuntimeError, so caught before the next clause)
+        raise HTTPException(503, f"zero-knowledge prover unavailable — run `cd zk && npm ci` ({e})") from e
     except RuntimeError as e:  # anchor tx rejected
         raise HTTPException(502, str(e)) from e
-    return result.to_json()
+    body = result.to_json()
+    # Phase 2 /api/sign fields (interfaces.md); the pipeline's own values win once it sets them.
+    body.setdefault("anonymous", result.anchor.anonymous)
+    body.setdefault("pending", not result.anchor.validated)
+    body.setdefault("meta_claims", [])
+    if result.anchor.anonymous:
+        body.setdefault("registry_root", result.anchor.registry_root)
+    return body
 
 
 @app.post("/api/verify")

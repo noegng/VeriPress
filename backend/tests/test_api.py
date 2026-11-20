@@ -146,3 +146,52 @@ def test_sign_with_known_parent_builds_history(client, signed):
     assert r.status_code == 200, r.text
     rep = post_verify(client.get(r.json()["image_url"]).content).json()
     assert [h["op"] for h in rep["history"]] == ["edit", "capture"]
+
+
+def test_anonymous_signing_is_refused_for_the_ai_key(client):
+    r = client.post(
+        "/api/sign",
+        files={"image": ("a.png", png(np.full((64, 64, 3), 90, np.uint8)), "image/png")},
+        data={"signer": "ai", "anonymous": "1"},
+    )
+    assert r.status_code == 422
+
+
+def _zk_ready() -> bool:
+    from tileproof import zk
+
+    return (zk.zk_dir() / "node_modules").exists()
+
+
+@pytest.mark.skipif(not _zk_ready(), reason="zk deps missing: cd zk && npm ci")
+def test_anonymous_sign_and_verify_offline(client):
+    """Registry built like setup_testnet.py does (device + fakes), root published in the
+    FakeLedger: the anonymous photo verifies as real with a valid ZK proof, without signer key."""
+    import os
+
+    from conftest import photo_like
+
+    from tileproof import zk
+
+    keys = Path(os.environ["TILEPROOF_KEYS"])
+    dev = json.loads((keys / "device.json").read_text())
+    dev["bjj"] = zk.keygen()
+    (keys / "device.json").write_text(json.dumps(dev))
+    pks = [zk.keygen()["pk"] for _ in range(3)] + [dev["bjj"]["pk"]]
+    (keys / "registry_devices.json").write_text(json.dumps({"pks": pks}))
+    import tileproof.api as api
+
+    api.app.state.ledger.publish_registry_root(zk.root(pks), at=0)
+
+    r = client.post(
+        "/api/sign",
+        files={"image": ("a.png", png(photo_like(seed=8)), "image/png")},
+        data={"signer": "device", "anonymous": "1"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["anonymous"] is True and body["signer"] == "" and body["registry_root"]
+    rep = post_verify(client.get(body["image_url"]).content).json()
+    assert rep["verdict"] == "real" and rep["anonymous"] is True
+    assert rep["zk"]["proof_ok"] and rep["zk"]["root_valid_at_anchor"]
+    assert rep["anchor"]["signer"] == ""
