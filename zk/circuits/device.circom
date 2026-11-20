@@ -1,6 +1,6 @@
 pragma circom 2.1.6;
 
-// TileProof — anonymous device attestation (ZK A, docs/decisions.md Q2-Q4, Q13-Q14).
+// VeriPress — anonymous device attestation (ZK A, docs/decisions.md Q2-Q4, Q13-Q14).
 //
 // Proves: "a device whose Baby Jubjub key is a leaf of the registry tree with root `root`
 // signed (EdDSA-Poseidon) the manifest digest (digest_hi, digest_lo)", without revealing

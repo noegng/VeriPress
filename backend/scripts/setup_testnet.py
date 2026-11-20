@@ -33,8 +33,8 @@ from xrpl.transaction import submit_and_wait
 from xrpl.utils import str_to_hex
 from xrpl.wallet import Wallet, generate_faucet_wallet
 
-from tileproof import zk
-from tileproof.ledger import REGISTRY_ROOT_MEMO_TYPE, XrplLedger
+from veripress import zk
+from veripress.ledger import REGISTRY_ROOT_MEMO_TYPE, XrplLedger
 
 NODE_URL = "https://s.altnet.rippletest.net:51234"
 KEYS = Path(__file__).resolve().parent.parent / "keys"

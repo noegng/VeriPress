@@ -6,7 +6,7 @@ import json
 import pytest
 from xrpl.utils import posix_to_ripple_time, str_to_hex
 
-from tileproof.ledger import (
+from veripress.ledger import (
     MEMO_TYPE,
     REGISTRY_ROOT_MEMO_TYPE,
     XrplLedger,

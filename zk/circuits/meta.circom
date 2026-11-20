@@ -1,6 +1,6 @@
 pragma circom 2.1.6;
 
-// TileProof — selective disclosure of capture metadata (ZK B, docs/decisions.md Q16-Q17).
+// VeriPress — selective disclosure of capture metadata (ZK B, docs/decisions.md Q16-Q17).
 //
 // The signed manifest carries commitment = Poseidon(time, lat_s, lon_s, salt) where
 //   time  = capture time, unix seconds (UTC)

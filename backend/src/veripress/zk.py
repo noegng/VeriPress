@@ -19,7 +19,7 @@ class ZkError(RuntimeError):
 
 
 def zk_dir() -> Path:
-    return Path(os.environ.get("TILEPROOF_ZK_DIR") or Path(__file__).resolve().parents[3] / "zk")
+    return Path(os.environ.get("VERIPRESS_ZK_DIR") or Path(__file__).resolve().parents[3] / "zk")
 
 
 def _run(cmd: str, payload: dict, timeout: float = 120) -> dict:

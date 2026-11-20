@@ -1,7 +1,7 @@
 import numpy as np
 from conftest import jpeg, photo_like, rescale
 
-from tileproof.watermark import embed, extract
+from veripress.watermark import embed, extract
 
 WM = bytes.fromhex("0123456789abcdef")
 

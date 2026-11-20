@@ -33,7 +33,7 @@
 ## Future work
 
 - ZK proof that a published image is a crop/resize/JPEG of a signed original (VerITAS / ZK-JPEG style).
-- Full C2PA manifest interop (emit TileProof data as a C2PA assertion).
+- Full C2PA manifest interop (emit VeriPress data as a C2PA assertion).
 - Confidential MPT / commitments for private ownership of provenance records.
 
 ## Sources

@@ -4,7 +4,7 @@ history in the account_tx (API v2) shape, real XrplLedger methods with the netwo
 import pytest
 from xrpl.utils import posix_to_ripple_time, str_to_hex
 
-from tileproof.ledger import (
+from veripress.ledger import (
     CredentialType,
     XrplLedger,
     _credential_intervals,

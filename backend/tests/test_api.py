@@ -33,14 +33,14 @@ def client(tmp_path_factory):
 
     tmp = tmp_path_factory.mktemp("api")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("TILEPROOF_KEYS", str(tmp / "keys-elsewhere"))  # not backend/keys: review item 2
-        mp.setenv("TILEPROOF_STORE", str(tmp / "store"))
-        mp.setenv("TILEPROOF_WATERMARK", "0")
-        mp.setenv("TILEPROOF_LEDGER", "fake")
+        mp.setenv("VERIPRESS_KEYS", str(tmp / "keys-elsewhere"))  # not backend/keys: review item 2
+        mp.setenv("VERIPRESS_STORE", str(tmp / "store"))
+        mp.setenv("VERIPRESS_WATERMARK", "0")
+        mp.setenv("VERIPRESS_LEDGER", "fake")
         _write_demo_keys(tmp / "keys-elsewhere")
-        import tileproof.api
+        import veripress.api
 
-        api = importlib.reload(tileproof.api)  # the app reads its config at import time
+        api = importlib.reload(veripress.api)  # the app reads its config at import time
         global _client
         _client = TestClient(api.app)
         yield _client
@@ -158,7 +158,7 @@ def test_anonymous_signing_is_refused_for_the_ai_key(client):
 
 
 def _zk_ready() -> bool:
-    from tileproof import zk
+    from veripress import zk
 
     return (zk.zk_dir() / "node_modules").exists()
 
@@ -171,15 +171,15 @@ def test_anonymous_sign_and_verify_offline(client):
 
     from conftest import photo_like
 
-    from tileproof import zk
+    from veripress import zk
 
-    keys = Path(os.environ["TILEPROOF_KEYS"])
+    keys = Path(os.environ["VERIPRESS_KEYS"])
     dev = json.loads((keys / "device.json").read_text())
     dev["bjj"] = zk.keygen()
     (keys / "device.json").write_text(json.dumps(dev))
     pks = [zk.keygen()["pk"] for _ in range(3)] + [dev["bjj"]["pk"]]
     (keys / "registry_devices.json").write_text(json.dumps({"pks": pks}))
-    import tileproof.api as api
+    import veripress.api as api
 
     api.app.state.ledger.publish_registry_root(zk.root(pks), at=0)
 

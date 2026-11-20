@@ -14,14 +14,14 @@ Un agent **ne modifie que les fichiers de son dev**. S'il a besoin d'un changeme
 
 | Dev A | Dev B | Partagés (commit dédié sur `main`, annoncé) |
 |---|---|---|
-| `backend/src/tileproof/commitment.py` | `backend/src/tileproof/ledger.py` (corps de `XrplLedger`) | `docs/interfaces.md` |
-| `backend/src/tileproof/signing.py` | `backend/src/tileproof/api.py` | signatures publiques de `ledger.py`, `store.py`, `pipeline.py` |
-| `backend/src/tileproof/pipeline.py` (corps) | `backend/src/tileproof/static/**` | `backend/pyproject.toml` + `uv.lock` |
-| `backend/src/tileproof/store.py` (corps) | `backend/scripts/**` | `README.md`, `docs/plan.md`, `CLAUDE.md`, ce fichier |
-| `backend/src/tileproof/watermark.py` | `backend/tests/test_ledger*.py`, `test_api*.py` | `backend/tests/conftest.py` (ajouts seulement) |
-| `backend/src/tileproof/cli.py`, `features.py`, `tiling.py`, `merkle.py` | | |
+| `backend/src/veripress/commitment.py` | `backend/src/veripress/ledger.py` (corps de `XrplLedger`) | `docs/interfaces.md` |
+| `backend/src/veripress/signing.py` | `backend/src/veripress/api.py` | signatures publiques de `ledger.py`, `store.py`, `pipeline.py` |
+| `backend/src/veripress/pipeline.py` (corps) | `backend/src/veripress/static/**` | `backend/pyproject.toml` + `uv.lock` |
+| `backend/src/veripress/store.py` (corps) | `backend/scripts/**` | `README.md`, `docs/plan.md`, `CLAUDE.md`, ce fichier |
+| `backend/src/veripress/watermark.py` | `backend/tests/test_ledger*.py`, `test_api*.py` | `backend/tests/conftest.py` (ajouts seulement) |
+| `backend/src/veripress/cli.py`, `features.py`, `tiling.py`, `merkle.py` | | |
 | `backend/tests/` (sauf les fichiers de B) | | |
-| **Phase 2 :** `zk/**`, `backend/src/tileproof/zk.py`, `metadata.py`, `c2pa_embed.py`, WebAuthn dans `signing.py` | **Phase 2 :** `/v/<tx>` (page + route), routes passkey, ancrage rapide et `credential_*`/`registry_root_at` dans `XrplLedger`, publication des racines dans `scripts/` | `FakeLedger` : Dev A le complète pour ses tests, Dev B le garde aligné sur `XrplLedger` |
+| **Phase 2 :** `zk/**`, `backend/src/veripress/zk.py`, `metadata.py`, `c2pa_embed.py`, WebAuthn dans `signing.py` | **Phase 2 :** `/v/<tx>` (page + route), routes passkey, ancrage rapide et `credential_*`/`registry_root_at` dans `XrplLedger`, publication des racines dans `scripts/` | `FakeLedger` : Dev A le complète pour ses tests, Dev B le garde aligné sur `XrplLedger` |
 
 ## 3. Git
 
@@ -36,7 +36,7 @@ Un agent **ne modifie que les fichiers de son dev**. S'il a besoin d'un changeme
 
 - Dev A développe et teste avec `FakeLedger` (aucun réseau).
 - Dev B développe la page contre les JSON d'exemple de `docs/interfaces.md` tant que `pipeline.py` lève `NotImplementedError` (réponse simulée dans `api.py`, retirée à la synchro).
-- Variable `TILEPROOF_LEDGER=fake|xrpl` : on passe sur `xrpl` seulement quand `XrplLedger` est prêt.
+- Variable `VERIPRESS_LEDGER=fake|xrpl` : on passe sur `xrpl` seulement quand `XrplLedger` est prêt.
 
 ## 5. Méthode (plugin mattpocock-skills, mode hackathon)
 

@@ -1,7 +1,7 @@
 """HTTP API — OWNER: Dev B.  Routes and JSON shapes: docs/interfaces.md.
 
-    uv run uvicorn tileproof.api:app --reload            # TILEPROOF_LEDGER=fake (default)
-    TILEPROOF_LEDGER=xrpl uv run uvicorn tileproof.api:app --host 0.0.0.0
+    uv run uvicorn veripress.api:app --reload            # VERIPRESS_LEDGER=fake (default)
+    VERIPRESS_LEDGER=xrpl uv run uvicorn veripress.api:app --host 0.0.0.0
 
 Calls only `pipeline.*`. Pipeline work (≈2 s CPU) and XRPL anchoring (waits for validation)
 are blocking, so they run in the threadpool to keep the event loop responsive.
@@ -40,7 +40,7 @@ TX_HASH = r"[0-9A-Fa-f]{16,64}"
 ENTRY_ID = re.compile(rf"^({TX_HASH})(-r\d+)?$")
 PARENT = re.compile(rf"^{TX_HASH}$")
 # signing.py resolves keys relative to the CWD; pin it so uvicorn works from any directory.
-os.environ.setdefault("TILEPROOF_KEYS", str(BACKEND / "keys"))
+os.environ.setdefault("VERIPRESS_KEYS", str(BACKEND / "keys"))
 
 
 def norm_entry_id(raw: str | None) -> str | None:
@@ -56,11 +56,11 @@ def norm_entry_id(raw: str | None) -> str | None:
 
 
 def make_ledger() -> Ledger:
-    kind = os.environ.get("TILEPROOF_LEDGER", "fake")
+    kind = os.environ.get("VERIPRESS_LEDGER", "fake")
     if kind == "xrpl":
         return XrplLedger()
     if kind != "fake":
-        raise RuntimeError(f"TILEPROOF_LEDGER must be fake|xrpl, got {kind!r}")
+        raise RuntimeError(f"VERIPRESS_LEDGER must be fake|xrpl, got {kind!r}")
     ledger = FakeLedger()
     # Offline demo: trust the demo keys like the real registry would. Same folder as signing.py.
     for name, ctype in (("device", CredentialType.CAPTURE_DEVICE), ("ai", CredentialType.AI_GENERATOR)):
@@ -73,21 +73,21 @@ def make_ledger() -> Ledger:
         try:
             ledger.publish_registry_root(zk.root(json.loads(reg.read_text())["pks"]), at=0)
         except zk.ZkError as e:  # Node / zk deps missing: named signing still works offline
-            log.warning("TileProof: anonymous registry not loaded (%s)", e)
+            log.warning("VeriPress: anonymous registry not loaded (%s)", e)
     return ledger
 
 
 def _warm_up() -> None:
     WARM["state"] = "loading"
-    log.info("TileProof: loading TrustMark watermark models (first run downloads them, ~3 min)…")
+    log.info("VeriPress: loading TrustMark watermark models (first run downloads them, ~3 min)…")
     t0 = time.monotonic()
     try:
         watermark.warm_up()
         WARM["state"] = "ready"
-        log.info("TileProof: watermark models ready in %.0f s", time.monotonic() - t0)
+        log.info("VeriPress: watermark models ready in %.0f s", time.monotonic() - t0)
     except Exception:  # noqa: BLE001 — the API still works, sign/verify will retry the load
         WARM["state"] = "failed"
-        log.exception("TileProof: watermark warm-up failed")
+        log.exception("VeriPress: watermark warm-up failed")
 
 
 @asynccontextmanager
@@ -99,9 +99,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="TileProof", lifespan=lifespan)
+app = FastAPI(title="VeriPress", lifespan=lifespan)
 app.state.ledger = make_ledger()
-app.state.store = Store(os.environ.get("TILEPROOF_STORE", BACKEND / "store"))
+app.state.store = Store(os.environ.get("VERIPRESS_STORE", BACKEND / "store"))
 
 
 async def read_image(upload: UploadFile) -> np.ndarray:
@@ -157,7 +157,7 @@ def files(name: str) -> FileResponse:
     path = app.state.store.image_path(entry_id)
     if not path.exists():
         raise HTTPException(404)
-    return FileResponse(path, media_type="image/png", filename=f"tileproof-{entry_id[:12]}.png")
+    return FileResponse(path, media_type="image/png", filename=f"veripress-{entry_id[:12]}.png")
 
 
 @app.post("/api/sign")

@@ -10,10 +10,10 @@ from PIL import Image
 from xrpl.constants import CryptoAlgorithm
 from xrpl.wallet import Wallet
 
-from tileproof import metadata
-from tileproof.ledger import CredentialType, FakeLedger
-from tileproof.pipeline import sign_image, verify_image
-from tileproof.store import Store
+from veripress import metadata
+from veripress.ledger import CredentialType, FakeLedger
+from veripress.pipeline import sign_image, verify_image
+from veripress.store import Store
 
 
 def exif_bytes(dt="2026:11:20 13:36:58", offset="+01:00", lat=(41.0, 6.0, 30.48), lat_ref="N",
@@ -72,8 +72,8 @@ def setup(tmp_path, monkeypatch):
     d.mkdir()
     w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
     (d / "device.json").write_text(json.dumps({"public_key": w.public_key, "private_key": w.private_key}))
-    monkeypatch.setenv("TILEPROOF_KEYS", str(d))
-    monkeypatch.setenv("TILEPROOF_WATERMARK", "0")
+    monkeypatch.setenv("VERIPRESS_KEYS", str(d))
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")
     ledger = FakeLedger()
     ledger.issue(w.public_key, CredentialType.CAPTURE_DEVICE)
     return ledger, Store(tmp_path / "store")

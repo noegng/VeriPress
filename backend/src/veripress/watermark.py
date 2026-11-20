@@ -22,7 +22,7 @@ _VERSION_BITS = "0001"
 
 
 def enabled() -> bool:
-    return os.environ.get("TILEPROOF_WATERMARK", "1") != "0"
+    return os.environ.get("VERIPRESS_WATERMARK", "1") != "0"
 
 
 @lru_cache(maxsize=1)

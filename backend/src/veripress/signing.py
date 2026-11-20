@@ -1,6 +1,6 @@
 """Ed25519 signing with XRPL-format keys (see docs/interfaces.md). OWNER: Dev A.
 
-Keys live in $TILEPROOF_KEYS (default ./keys), written by scripts/setup_testnet.py:
+Keys live in $VERIPRESS_KEYS (default ./keys), written by scripts/setup_testnet.py:
   keys/<name>.json  {"seed", "address", "public_key": "ED…", "private_key": "ED…"}
 """
 
@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 
 def keys_dir() -> Path:
-    return Path(os.environ.get("TILEPROOF_KEYS", "keys"))
+    return Path(os.environ.get("VERIPRESS_KEYS", "keys"))
 
 
 @dataclass(frozen=True)

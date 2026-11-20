@@ -1,10 +1,10 @@
-# TileProof
+# VeriPress
 
 > Prove where an image comes from — and show exactly which parts changed — even after it has been compressed and shared on social media.
 
 Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track 1: Advanced cryptography for blockchain**.
 
-_Working name — rename freely._
+_Formerly "TileProof" (renamed on Fri 20 Nov); the GitHub repository keeps its old name for now._
 
 ---
 
@@ -46,7 +46,7 @@ _Working name — rename freely._
 
 ## Why it's different
 
-| | C2PA / existing tools | TileProof |
+| | C2PA / existing tools | VeriPress |
 |---|---|---|
 | Survives metadata stripping | Only via centralized lookup | Watermark → XRPL anchor |
 | Shows *where* the image changed | No | Tile-level heatmap |

@@ -1,10 +1,10 @@
-"""tileproof CLI.
+"""veripress CLI.
 
-  tileproof commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
-  tileproof verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
-  tileproof redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
-  tileproof demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
-  tileproof calibrate ORIG_DIR SHARED_DIR -o OUT.json
+  veripress commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
+  veripress verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
+  veripress redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
+  veripress demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
+  veripress calibrate ORIG_DIR SHARED_DIR -o OUT.json
                                                -> robust-tile / phash margins on real shared copies
                                                   (same file stem in both dirs, e.g. IMG_1.jpg / IMG_1.jpeg)
 """
@@ -115,7 +115,7 @@ def cmd_demo(a: argparse.Namespace) -> int:
         if not (keys / f"{name}.json").exists():
             w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
             _write_json(keys / f"{name}.json", {"public_key": w.public_key, "private_key": w.private_key})
-    os.environ["TILEPROOF_KEYS"] = str(keys)
+    os.environ["VERIPRESS_KEYS"] = str(keys)
     ledger, store = FakeLedger(), Store(out / "store")
     ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
     ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
@@ -227,7 +227,7 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="tileproof")
+    p = argparse.ArgumentParser(prog="veripress")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("commit", help="build tile Merkle trees for an image")

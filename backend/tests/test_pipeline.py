@@ -8,9 +8,9 @@ from PIL import Image
 from xrpl.constants import CryptoAlgorithm
 from xrpl.wallet import Wallet
 
-from tileproof.ledger import CredentialType, FakeLedger
-from tileproof.pipeline import FinalVerdict, redact_image, sign_image, verify_image, verify_stored
-from tileproof.store import Store
+from veripress.ledger import CredentialType, FakeLedger
+from veripress.pipeline import FinalVerdict, redact_image, sign_image, verify_image, verify_stored
+from veripress.store import Store
 
 
 def png_to_rgb(png: bytes) -> np.ndarray:
@@ -28,7 +28,7 @@ def keys(tmp_path, monkeypatch):
         data = {"seed": w.seed, "address": w.classic_address, "public_key": w.public_key, "private_key": w.private_key}
         (d / f"{name}.json").write_text(json.dumps(data))
         out[name] = w.public_key
-    monkeypatch.setenv("TILEPROOF_KEYS", str(d))
+    monkeypatch.setenv("VERIPRESS_KEYS", str(d))
     return out
 
 
@@ -142,7 +142,7 @@ def test_anchor_missing_on_ledger_is_unknown(photo, ledger, store):
 
 def test_whatsapp_like_copy_is_found_by_phash_and_real(photo, ledger, store, monkeypatch):
     """Metadata stripped, downscaled, recompressed, no id, no watermark: perceptual hash fallback."""
-    monkeypatch.setenv("TILEPROOF_WATERMARK", "0")
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")
     sign_image(photo, "device", ledger, store)
     shared = jpeg(rescale(photo, 0.5), 70)
     report, _ = verify_image(shared, ledger, store)
@@ -226,7 +226,7 @@ def test_whatsapp_like_copy_is_found_by_watermark_and_real(photo, ledger, store)
 
 def test_watermark_copied_onto_another_image_is_detected(photo, ledger, store):
     from conftest import photo_like
-    from tileproof.watermark import embed
+    from veripress.watermark import embed
 
     signed, _ = sign_image(photo, "device", ledger, store)
     fake = embed(photo_like(seed=11), bytes.fromhex(signed.manifest.wm_id))

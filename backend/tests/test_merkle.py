@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from tileproof.merkle import MerkleTree, ProofStep, leaf_hash, node_hash, verify_proof
+from veripress.merkle import MerkleTree, ProofStep, leaf_hash, node_hash, verify_proof
 
 
 def leaves(n: int) -> list[bytes]:
