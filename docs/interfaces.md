@@ -217,3 +217,12 @@ def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None: 
 Si `latest_validated` lève une exception (non implémenté, réseau), on signe sans T0.
 
 `/api/verify` : nouvelle clé `"time_window": {"not_before": unix | null, "not_after": unix, "ledger_index": int | null, "t0_ok": bool}` (`null` quand rien n'est trouvé). Affichage proposé : « signée entre 14:02:31 et 14:02:52 UTC », avec le lien vers le ledger T0.
+
+## Négatif RAW → JPEG de référence (`op = "develop"`)
+
+Calqué sur Apple Reference Image (phase 1 : négatif numérique signé ; phase 2 : JPEG de référence), mais ancré sur XRPL :
+- `sign_image(rgb_jpeg, "device", …, parent=<tx du RAW>, op="develop")`. Refusé (`ValueError`) sans `parent`, ou si le RAW n'a pas été signé par **la même clé d'appareil**, ou en mode anonyme ;
+- vérification : `verdict = real`, motif « Developed from the signed RAW negative <tx> by the same CAPTURE_DEVICE … », `history = [develop, capture]`, si la chaîne vérifie et que les deux signataires sont identiques ; sinon `edited` (« Signed development … could not be verified ») ;
+- démo : `uv run python -m veripress.cli demo-raw fichier.CR3 -o out/`.
+
+Option pour Dev B : un champ `op=develop` (avec `parent`) dans `/api/sign`, à passer à `sign_image(op=…)`.

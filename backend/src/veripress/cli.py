@@ -3,6 +3,7 @@
   veripress commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
   veripress verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   veripress redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
+  veripress demo-raw RAW -o OUT_DIR            -> digital negative -> signed reference JPEG
   veripress demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
   veripress calibrate ORIG_DIR SHARED_DIR -o OUT.json
                                                -> robust-tile / phash margins on real shared copies
@@ -94,6 +95,77 @@ def _jpeg(rgb, quality: int, scale: float = 1.0):
     return np.asarray(Image.open(buf).convert("RGB"))
 
 
+def _demo_ledger(out: Path):
+    """Offline demo world: fresh device/ai keys in out/keys, credentials on a FakeLedger."""
+    from xrpl.constants import CryptoAlgorithm
+    from xrpl.wallet import Wallet
+
+    from .ledger import CredentialType, FakeLedger
+    from .signing import load_key
+    from .store import Store
+
+    keys = out / "keys"
+    keys.mkdir(parents=True, exist_ok=True)
+    for name in ("device", "ai"):
+        if not (keys / f"{name}.json").exists():
+            w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
+            _write_json(keys / f"{name}.json", {"public_key": w.public_key, "private_key": w.private_key})
+    os.environ["VERIPRESS_KEYS"] = str(keys)
+    ledger, store = FakeLedger(), Store(out / "store")
+    ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
+    ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
+    return ledger, store
+
+
+def cmd_demo_raw(a: argparse.Namespace) -> int:
+    """Digital negative -> reference JPEG (Apple Reference Image phases 1 and 2, on XRPL)."""
+    import io
+
+    import numpy as np
+    from PIL import ImageEnhance
+
+    from .pipeline import sign_image, verify_image
+
+    out = Path(a.out)
+    ledger, store = _demo_ledger(out)
+    summary: dict[str, dict] = {}
+
+    def check(name: str, rgb, ext: str = "png") -> None:
+        Image.fromarray(rgb).save(out / f"{name}.{ext}", quality=92)
+        report, _ = verify_image(rgb, ledger, store)
+        j = report.to_json()
+        summary[name] = {"verdict": j["verdict"], "reason": j["reason"], "found_by": j["found_by"],
+                         "history": [h["op"] for h in j["history"]]}
+        print(f"{name:18} {j['verdict']:8} via {str(j['found_by']):9} {j['reason']}")
+
+    def rgb_of(png: bytes):
+        return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
+
+    # Phase 1: the device signs its RAW development (LibRaw for camera RAW / DNG).
+    negative = load_rgb(a.image)
+    raw, raw_png = sign_image(negative, "device", ledger, store)
+    check("1_raw_negative", rgb_of(raw_png))
+
+    # Phase 2: the device develops a JPEG from it and signs it as a development of the negative.
+    img = Image.fromarray(rgb_of(raw_png))
+    img = ImageEnhance.Color(ImageEnhance.Contrast(img).enhance(1.2)).enhance(1.15)
+    img.thumbnail((2400, 2400))
+    jpeg_rgb = _jpeg(np.asarray(img), 92)
+    dev, dev_png = sign_image(jpeg_rgb, "device", ledger, store, parent=raw.entry_id, op="develop")
+    dev_rgb = rgb_of(dev_png)
+    check("2_reference_jpeg", dev_rgb, "jpg")
+
+    h, w = dev_rgb.shape[:2]
+    check("3_jpeg_whatsapp", _jpeg(dev_rgb, 70, scale=min(1.0, 1600 / max(h, w))), "jpg")
+    retouched = dev_rgb.copy()
+    retouched[h * 3 // 8 : h * 5 // 8, w * 3 // 8 : w * 5 // 8] = (255, 0, 255)
+    check("4_jpeg_retouched", _jpeg(retouched, 90), "jpg")
+
+    _write_json(out / "summary.json", summary)
+    print(f"written to {out}/")
+    return 0
+
+
 def cmd_demo(a: argparse.Namespace) -> int:
     """Play the pitch scenarios end to end with an in-memory ledger (backup demo)."""
     import io
@@ -110,15 +182,7 @@ def cmd_demo(a: argparse.Namespace) -> int:
 
     out = Path(a.out)
     keys = out / "keys"
-    keys.mkdir(parents=True, exist_ok=True)
-    for name in ("device", "ai"):
-        if not (keys / f"{name}.json").exists():
-            w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
-            _write_json(keys / f"{name}.json", {"public_key": w.public_key, "private_key": w.private_key})
-    os.environ["VERIPRESS_KEYS"] = str(keys)
-    ledger, store = FakeLedger(), Store(out / "store")
-    ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
-    ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
+    ledger, store = _demo_ledger(out)
     # Anonymous registry (ZK A): the device + 20 fictitious members, root "published" at t=0.
     from . import zk
 
@@ -283,6 +347,11 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("--ai", help="AI-generated image for scenario 6 (default: mirrored photo)")
     dm.add_argument("-o", "--out", required=True)
     dm.set_defaults(fn=cmd_demo)
+
+    dr = sub.add_parser("demo-raw", help="RAW negative -> signed reference JPEG (Apple Reference Image, on XRPL)")
+    dr.add_argument("image", help="camera RAW / DNG (or any image)")
+    dr.add_argument("-o", "--out", required=True)
+    dr.set_defaults(fn=cmd_demo_raw)
 
     cb = sub.add_parser("calibrate", help="measure tile/phash margins on real shared copies")
     cb.add_argument("originals")

@@ -47,3 +47,20 @@ def test_demo_runs_without_the_watermark_models(tmp_path, monkeypatch):
     summary = json.loads((out / "summary.json").read_text())
     assert summary["5_copied_watermark"] == {"skipped": "watermark disabled (VERIPRESS_WATERMARK=0)"}
     assert summary["3_whatsapp"]["verdict"] == "real" and summary["3_whatsapp"]["found_by"] == "phash"
+
+
+def test_demo_raw_plays_negative_then_reference_jpeg(tmp_path, monkeypatch):
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")
+    src = tmp_path / "negative.png"  # any image works; with a real RAW it is developed by LibRaw
+    Image.fromarray(photo_like()).save(src)
+    out = tmp_path / "raw_demo"
+    assert main(["demo-raw", str(src), "-o", str(out)]) == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert {k: v["verdict"] for k, v in summary.items()} == {
+        "1_raw_negative": "real",
+        "2_reference_jpeg": "real",
+        "3_jpeg_whatsapp": "real",
+        "4_jpeg_retouched": "edited",
+    }
+    assert summary["2_reference_jpeg"]["history"] == ["develop", "capture"]
+    assert (out / "2_reference_jpeg.jpg").exists()
