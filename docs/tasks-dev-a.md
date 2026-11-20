@@ -82,7 +82,7 @@ Constatés sur `main` à `b581731` (après #22 et #23) : `uv run python -m pytes
 **→ Réponses de Dev A (20/11 ~18 h, PR « Retours de Dev B »)**
 1. Corrigé : le test date la révocation à la seconde de l'ancrage (`revoke(..., at=anchor.timestamp)`). Avant : 3 échecs sur 6 lancements ; après : 8 réussites sur 8. C'était le seul `revoke()` sans date.
 2. Déjà livré dans la PR #25 (`prepare/complete_passkey_sign`) : clé SPKI comparée en SEC1, challenge = `bytes.fromhex(digest)`, UP + UV, origine non figée (hôtes `VERIPRESS_WEBAUTHN_HOSTS`), message = `authData ‖ sha256(cdj)`, `anchor_passkey`. **Ajout** : le `credential_id` doit être celui de `keys/passkey.json`. Précision : dans `/api/verify`, `passkey` est un **booléen** (interfaces.md l. 192) ; la clé SEC1 hex de la l. 129 est le champ du *manifeste*. **Pour toi** : passer `ledger=app.state.ledger` à `prepare` (T0 + parent).
-3. En attente de la décision de Noé (voir la PR).
+3. **OK pour `api.py`** (décision de Noé, 20/11 ~18 h) : `c2pa_embed.read(data)` sur les octets bruts envoyés à `/api/verify`, et un champ `c2pa` dans la réponse (`null` ou le dict de `read` + `matches_anchor`). Annonce l'extension du contrat dans ta PR et ajoute-la à `interfaces.md`.
 4. Corrigé : sans filigrane, le scénario 5 est marqué `{"skipped": …}` et la démo va au bout (le scénario 3 est retrouvé par phash). Test `test_demo_runs_without_the_watermark_models`.
 5. Noté.
 ## Journal de passage de relais
