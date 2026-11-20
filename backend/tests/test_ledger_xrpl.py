@@ -134,3 +134,17 @@ def test_batch_of_three_records_in_one_transaction(tmp_path):
         assert err == "" and info == {"tx_hash": tx, "index": i, "size": 3}
         assert anchor.digest.upper() == digest and anchor.timestamp == batch.timestamp
     print(f"\nbatch of 3 anchored in {tx}")
+
+
+def test_post_quantum_keys_attested_in_the_credential_uri():
+    """setup_testnet.py attests each subject's ML-DSA-87 key (and the device passkey) in its
+    credential URI; credential_pq reads back the sha256 of the key in keys/<name>.json."""
+    import hashlib
+
+    ledger = XrplLedger(keys_dir=KEYS)
+    for name in ("device", "ai"):
+        data = json.loads((KEYS / f"{name}.json").read_text())
+        if "mldsa" not in data:
+            pytest.skip("run scripts/setup_testnet.py first (ML-DSA-87 keys)")
+        expected = hashlib.sha256(bytes.fromhex(data["mldsa"]["public_key"])).hexdigest()
+        assert ledger.credential_pq(data["public_key"]) == expected

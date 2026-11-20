@@ -118,6 +118,8 @@ $("info").innerHTML = [
   ["Device status", r.credential_revoked_at && `⚠️ revoked since ${esc(fmtTime(r.credential_revoked_at))} (after this image was anchored)`],
   ["Signature", r.zk ? (r.zk.proof_ok ? "✅ zero-knowledge proof valid" : "❌ zero-knowledge proof invalid") : r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
   ["Signer", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "🕶️ anonymous accredited device" : null)],
+  ["Post-quantum", r.post_quantum && (r.post_quantum.signature_ok && r.post_quantum.attested
+    ? "🔐 hybrid Ed25519 + ML-DSA-87 ✅ · key attested by the registry" : "❌ ML-DSA-87 signature not verified")],
   ["Signed between", timeWindow(r.time_window)],
   ["Anchored", a && esc(fmtTime(a.timestamp))],
   ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],

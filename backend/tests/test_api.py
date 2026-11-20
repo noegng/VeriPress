@@ -23,8 +23,18 @@ def _write_demo_keys(folder: Path) -> None:
     for name in ("device", "ai"):
         w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
         pub, priv = derive_keypair(w.seed, algorithm=CryptoAlgorithm.ED25519)
-        data = {"seed": w.seed, "address": w.address, "public_key": pub, "private_key": priv}
+        data = {"seed": w.seed, "address": w.address, "public_key": pub, "private_key": priv,
+                "mldsa": _mldsa_key()}  # as setup_testnet.py writes them (hybrid post-quantum)
         (folder / f"{name}.json").write_text(json.dumps(data))
+
+
+def _mldsa_key() -> dict:
+    from cryptography.hazmat.primitives.asymmetric import mldsa
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+    k = mldsa.MLDSA87PrivateKey.generate()
+    return {"public_key": k.public_key().public_bytes_raw().hex(),
+            "private_pem": k.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -76,7 +86,10 @@ def test_page_and_health(client):
 
 def test_sign_then_verify_is_real_with_keys_outside_backend(signed):
     _, published = signed
-    assert post_verify(published).json()["verdict"] == "real"
+    rep = post_verify(published).json()
+    assert rep["verdict"] == "real"
+    # offline ledger attests the ML-DSA-87 key of keys/device.json, like the registry on XRPL
+    assert rep["post_quantum"] == {"alg": "ML-DSA-87", "signature_ok": True, "attested": True}
 
 
 def test_lower_case_ids_are_normalised(client, signed):
