@@ -195,3 +195,34 @@ def test_anonymous_sign_and_verify_offline(client):
     assert rep["verdict"] == "real" and rep["anonymous"] is True
     assert rep["zk"]["proof_ok"] and rep["zk"]["root_valid_at_anchor"]
     assert rep["anchor"]["signer"] == ""
+
+
+def _jpeg_with_capture_exif(rgb: np.ndarray) -> bytes:
+    """JPEG carrying DateTimeOriginal + offset + GPS (Bari), like a phone photo."""
+    ex = Image.Exif()
+    ifd = ex.get_ifd(0x8769)
+    ifd[0x9003], ifd[0x9011] = "2026:11:20 13:36:58", "+01:00"
+    ex.get_ifd(0x8825).update({1: "N", 2: (41.0, 6.0, 30.48), 3: "E", 4: (16.0, 52.0, 12.0)})
+    buf = io.BytesIO()
+    Image.fromarray(rgb).save(buf, "JPEG", quality=95, exif=ex.tobytes())
+    return buf.getvalue()
+
+
+@pytest.mark.skipif(not _zk_ready(), reason="zk deps missing: cd zk && npm ci")
+def test_exif_of_the_upload_gives_proven_day_and_area_claims(client):
+    """ZK B through the API: the uploaded file's EXIF reaches sign_image, the published PNG
+    has no EXIF, and verification shows day + area claims proven in zero knowledge."""
+    from conftest import photo_like
+
+    r = client.post(
+        "/api/sign",
+        files={"image": ("phone.jpg", _jpeg_with_capture_exif(photo_like(seed=12)), "image/jpeg")},
+        data={"signer": "device"},
+    )
+    assert r.status_code == 200, r.text
+    published = client.get(r.json()["image_url"]).content
+    assert not Image.open(io.BytesIO(published)).getexif()  # GPS never leaves in the image
+    claims = post_verify(published).json()["meta_claims"]
+    assert sorted(c["kind"] for c in claims) == ["area", "day"]
+    assert all(c["proof_ok"] for c in claims)
+    assert "20 Nov 2026" in next(c["label"] for c in claims if c["kind"] == "day")
