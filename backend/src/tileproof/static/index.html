@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TileProof</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
+    --accent: #1f5eff; --real: #1f9d55; --edited: #e8590c; --ai: #1c7ed6; --unknown: #868e96;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .tag { color: var(--muted); font-size: 14px; }
+  ol.history { list-style: none; padding: 0; margin: 8px 0 0; border-left: 2px solid var(--line); }
+  ol.history li { position: relative; padding: 4px 0 8px 16px; font-size: 14px; }
+  ol.history li::before { content: ""; position: absolute; left: -6px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  ol.history li.bad::before { background: #c92a2a; }
+  details.more { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  details.more input { width: 100%; margin-top: 8px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--line); padding: 4px; border-radius: 12px; margin-bottom: 16px; }
+  .tabs button { border: 0; padding: 12px; border-radius: 9px; font: inherit; font-weight: 600; background: transparent; color: var(--muted); cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  section[hidden] { display: none; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  label.drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 22px 12px; text-align: center; cursor: pointer; color: var(--muted); }
+  label.drop:hover, label.drop.over { border-color: var(--accent); color: var(--ink); }
+  label.drop input { display: none; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg label { padding: 9px 14px; cursor: pointer; }
+  .seg input { display: none; }
+  .seg input:checked + span { color: var(--accent); font-weight: 600; }
+  input[type=text] { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: 14px ui-monospace, monospace; }
+  .btn { border: 0; background: var(--accent); color: #fff; font: inherit; font-weight: 600; padding: 12px 18px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .stage { position: relative; margin-top: 12px; border-radius: 10px; overflow: hidden; background: #000; line-height: 0; }
+  .stage img { width: 100%; height: auto; display: block; }
+  .stage img.overlay { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; transition: opacity .2s; }
+  .stage img:not(.overlay) { transition: filter .2s; }
+  .stage.dim img:not(.overlay) { filter: grayscale(.85) brightness(.75); }
+  a { color: var(--accent); }
+  .badge { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 12px; color: #fff; }
+  .badge .dot { font-size: 40px; line-height: 1; }
+  .badge strong { font-size: 26px; display: block; letter-spacing: -0.01em; }
+  .badge small { opacity: .9; }
+  .v-real { background: var(--real); } .v-edited { background: var(--edited); }
+  .v-ai { background: var(--ai); } .v-unknown { background: var(--unknown); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; font-size: 14px; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  code { font: 13px ui-monospace, monospace; }
+  .counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .counts div { border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+  .counts b { display: block; font-size: 22px; }
+  .counts span { font-size: 12px; color: var(--muted); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  .err { color: #c92a2a; margin-top: 10px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
+  canvas.overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  canvas.overlay.passive { pointer-events: none; }
+  h2.sub { font-size: 15px; margin: 18px 0 8px; } h2.sub small { color: var(--muted); font-weight: 400; }
+  #tree { width: 100%; height: 150px; display: block; transform: scaleY(-1); cursor: pointer; touch-action: none; }
+  #tree rect { stroke: var(--card); stroke-width: .6; vector-effect: non-scaling-stroke; }
+  #tree rect.path { stroke: var(--ink); stroke-width: 2; }
+  #tree rect.sib { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 2; }
+  .treeaxis { font-size: 12px; color: var(--muted); margin: 3px 0; }
+  .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -3px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  @media (max-width: 480px) { .counts { grid-template-columns: repeat(2, 1fr); } .badge strong { font-size: 22px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Tile<span>Proof</span></h1>
+    <span class="tag">Image provenance anchored on XRPL</span>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="sign">Sign</button>
+    <button role="tab" aria-selected="false" data-tab="verify">Verify</button>
+  </div>
+
+  <section id="tab-sign">
+    <div class="card">
+      <label class="drop" id="signDrop">
+        <input type="file" accept="image/*" capture="environment" id="signFile">
+        <div>📷 <b>Take or choose a photo</b><br><small>Signed and anchored on XRPL Testnet</small></div>
+      </label>
+      <div class="stage" id="signStage" hidden><img id="signPreview" alt="Image to sign"></div>
+      <div class="row">
+        <div class="seg">
+          <label><input type="radio" name="signer" value="device" checked><span>📱 Capture device</span></label>
+          <label><input type="radio" name="signer" value="ai"><span>🤖 AI generator</span></label>
+        </div>
+        <button class="btn" id="signBtn" disabled>Sign &amp; anchor</button>
+      </div>
+      <details class="more">
+        <summary>This image is an edit of a signed image</summary>
+        <input type="text" id="parentInput" placeholder="tx hash of the original (version chain)" autocomplete="off" spellcheck="false">
+      </details>
+      <div class="err" id="signErr"></div>
+    </div>
+    <div class="card" id="signResult" hidden>
+      <div class="badge v-real"><span class="dot">⛓️</span><div><strong>Anchored</strong><small id="signWhen"></small></div></div>
+      <dl id="signInfo"></dl>
+      <div class="row">
+        <a class="btn" id="signDownload" download>⬇ Download signed image</a>
+        <a class="btn ghost" id="signExplorer" target="_blank" rel="noopener">View on XRPL explorer ↗</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-verify" hidden>
+    <div class="card">
+      <label class="drop" id="verifyDrop">
+        <input type="file" accept="image/*" id="verifyFile">
+        <div>🔍 <b>Choose an image to verify</b><br><small>Even after WhatsApp / screenshots</small></div>
+      </label>
+      <div class="row">
+        <input type="text" id="txInput" placeholder="tx hash (optional)" autocomplete="off" spellcheck="false">
+        <button class="btn" id="verifyBtn" disabled>Verify</button>
+      </div>
+      <div class="err" id="verifyErr"></div>
+    </div>
+    <div class="card" id="verifyResult" hidden>
+      <div class="badge" id="badge"><span class="dot" id="badgeDot"></span><div><strong id="badgeTitle"></strong><small id="badgeReason"></small></div></div>
+      <div class="stage" id="verifyStage">
+        <img id="verifyPreview" alt="Verified image">
+        <img class="overlay" id="heatmap" alt="" hidden>
+        <canvas class="overlay passive" id="tileCanvas"></canvas>
+        <canvas class="overlay" id="redactCanvas" hidden></canvas>
+      </div>
+      <div class="row" id="heatmapCtl" hidden>
+        <label><input type="checkbox" id="heatmapToggle" checked> Show tile heatmap</label>
+      </div>
+      <div class="legend" id="legend" hidden>
+        <span><i style="border:1px solid var(--muted)"></i>exact (no overlay)</span>
+        <span><i style="background:#fab005"></i>recompressed</span>
+        <span><i style="background:#e8590c"></i>changed</span>
+        <span><i style="background:#000"></i>redacted</span>
+      </div>
+      <div class="counts" id="counts"></div>
+      <div id="treeBox" hidden>
+        <h2 class="sub">Merkle tree <small id="treeHint">— tap a tile or a node</small></h2>
+        <div class="treeaxis">⛓️ root — anchored on XRPL</div>
+        <svg id="tree" preserveAspectRatio="none" role="img" aria-label="Merkle tree of the image tiles"></svg>
+        <div class="treeaxis" id="treeLeaves">▦ leaves — one per tile</div>
+      </div>
+      <dl id="verifyInfo"></dl>
+      <div id="historyBox" hidden>
+        <h2 class="sub">Version history</h2>
+        <ol class="history" id="history"></ol>
+      </div>
+      <div class="row" id="redactCtl" hidden>
+        <button class="btn ghost" id="redactStart">✏️ Redact areas</button>
+      </div>
+      <div id="redactPanel" hidden>
+        <p class="hint">Drag on the image to black out areas (e.g. faces). The rest stays verifiable.</p>
+        <div class="row">
+          <button class="btn" id="redactApply" disabled>Redact &amp; re-verify</button>
+          <button class="btn ghost" id="redactClear">Clear</button>
+          <a class="btn ghost" id="redactDownload" download hidden>⬇ Download redacted</a>
+        </div>
+        <div class="err" id="redactErr"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const VERDICTS = {
+  real:    { dot: "🟢", title: "Real",         cls: "v-real" },
+  edited:  { dot: "🟠", title: "Edited",       cls: "v-edited" },
+  ai:      { dot: "🔵", title: "AI-generated", cls: "v-ai" },
+  unknown: { dot: "⚪", title: "Unknown",      cls: "v-unknown" },
+};
+
+// Tabs
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  for (const t of ["sign", "verify"]) $("tab-" + t).hidden = t !== b.dataset.tab;
+}));
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function short(h) { return h && h.length > 20 ? h.slice(0, 10) + "…" + h.slice(-6) : h; }
+function safeUrl(u) { try { const x = new URL(u, location.href); return ["https:", "http:"].includes(x.protocol) ? x.href : "#"; } catch { return "#"; } }
+function rows(pairs) { return pairs.filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join(""); }
+
+// File pickers (click or drag & drop) with preview
+function picker(dropId, inputId, onFile) {
+  const drop = $(dropId), input = $(inputId);
+  input.addEventListener("change", () => input.files[0] && onFile(input.files[0]));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) onFile(f); });
+}
+let signFile = null, verifyFile = null;
+picker("signDrop", "signFile", (f) => {
+  signFile = f; $("signBtn").disabled = false; $("signResult").hidden = true;
+  $("signPreview").src = URL.createObjectURL(f); $("signStage").hidden = false;
+});
+picker("verifyDrop", "verifyFile", (f) => {
+  verifyFile = f; $("verifyBtn").disabled = false; $("verifyResult").hidden = true;
+  $("verifyPreview").src = URL.createObjectURL(f);
+});
+
+async function post(url, form, btn, errEl) {
+  const label = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Working…'; errEl.textContent = "";
+  try {
+    const r = await fetch(url, { method: "POST", body: form });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    return body;
+  } catch (e) {
+    errEl.textContent = "⚠ " + e.message; return null;
+  } finally { btn.disabled = false; btn.innerHTML = label; }
+}
+
+// Sign
+$("signBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("image", signFile);
+  fd.append("signer", document.querySelector("input[name=signer]:checked").value);
+  const parent = $("parentInput").value.trim();
+  if (parent) fd.append("parent", parent);
+  const res = await post("/api/sign", fd, $("signBtn"), $("signErr"));
+  if (!res) return;
+  $("signWhen").textContent = `Tx ${short(res.tx_hash)} validated on XRPL Testnet`;
+  $("signInfo").innerHTML = rows([
+    ["Entry", `<code>${esc(short(res.entry_id))}</code>`],
+    ["Signer key", `<code>${esc(short(res.signer))}</code>`],
+    ["Manifest digest", `<code>${esc(short(res.digest))}</code>`],
+    ["Tiles", res.grid && `${res.grid.cols} × ${res.grid.rows} (${res.grid.cols * res.grid.rows} tiles of ${res.grid.tile}px)`],
+    ["Exact root", `<code>${esc(short(res.roots?.exact))}</code>`],
+    ["Robust root", `<code>${esc(short(res.roots?.robust))}</code>`],
+  ]);
+  $("signDownload").href = safeUrl(res.image_url);
+  $("signExplorer").href = safeUrl(res.explorer_url);
+  $("txInput").value = res.tx_hash || "";
+  $("signResult").hidden = false;
+  $("signResult").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// Verify
+function applyHeatmapToggle() {
+  const on = $("heatmapToggle").checked && !$("heatmap").hidden;
+  $("heatmap").style.opacity = on ? 1 : 0;
+  $("verifyStage").classList.toggle("dim", on);
+}
+$("heatmapToggle").addEventListener("change", applyHeatmapToggle);
+$("verifyBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("image", verifyFile);
+  const tx = $("txInput").value.trim();
+  if (tx) fd.append("entry_id", tx);
+  const res = await post("/api/verify", fd, $("verifyBtn"), $("verifyErr"));
+  if (res) showReport(res);
+});
+
+function showReport(r) {
+  const v = VERDICTS[r.verdict] || VERDICTS.unknown;
+  $("badge").className = "badge " + v.cls;
+  $("badgeDot").textContent = v.dot;
+  $("badgeTitle").textContent = r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)" : v.title;
+  $("badgeReason").textContent = r.reason || "";
+
+  const hm = $("heatmap");
+  if (r.heatmap_png_b64) { hm.src = "data:image/png;base64," + r.heatmap_png_b64; hm.hidden = false; }
+  else { hm.hidden = true; hm.removeAttribute("src"); }
+  $("heatmapCtl").hidden = $("legend").hidden = !r.heatmap_png_b64;
+  applyHeatmapToggle();
+
+  const c = r.tiles?.counts;
+  $("counts").innerHTML = c ? [["exact", "exact"], ["robust", "recompressed"], ["changed", "changed"], ["redacted", "redacted"]]
+    .map(([k, l]) => `<div><b>${Number(c[k] || 0)}</b><span>${l}</span></div>`).join("") : "";
+
+  const a = r.anchor;
+  $("verifyInfo").innerHTML = rows([
+    ["Found by", r.found_by && esc({ tx_hash: "tx hash", watermark: "invisible watermark", phash: "perceptual hash" }[r.found_by] || r.found_by)],
+    ["Credential", r.credential && esc(r.credential)],
+    ["Signature", r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
+    ["Anchored", a && esc(new Date(a.timestamp * 1000).toLocaleString())],
+    ["Transaction", a && `<a href="${esc(safeUrl(a.explorer_url))}" target="_blank" rel="noopener"><code>${esc(short(a.tx_hash))}</code> ↗</a>`],
+    ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
+    ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
+  ]);
+  const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", ai_generate: "🤖 AI-generated" };
+  const hist = r.history || [];
+  $("historyBox").hidden = hist.length < 2;
+  $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op)} · ${esc(new Date(h.timestamp * 1000).toLocaleString())}
+    · <a href="${esc(safeUrl("https://testnet.xrpl.org/transactions/" + h.tx_hash))}" target="_blank" rel="noopener"><code>${esc(short(h.tx_hash))}</code> ↗</a>${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
+  if (r.tiles) $("treeLeaves").textContent = `▦ leaves — ${r.tiles.grid.cols * r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}×${r.tiles.grid.tile} px`;
+  buildTree(r.tiles);
+  lastEntry = r.verdict !== "unknown" ? r.entry_id : null;
+  stopRedact();
+  $("redactCtl").hidden = !lastEntry;
+  $("verifyResult").hidden = false;
+  $("verifyResult").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Merkle tree <-> image (option). Mirrors merkle.py: leaves in row-major order, pairs (i, i^1),
+// odd last node promoted. So node j at level k covers the contiguous leaves [j*2^k, (j+1)*2^k).
+const COLORS = { exact: "#1f9d55", robust: "#fab005", changed: "#e8590c", redacted: "#000000" };
+const RANK = { exact: 0, redacted: 1, robust: 2, changed: 3 };
+let tree = null; // { statuses, cols, rows, n, levels: [[status…]…], rects: [[SVGRect…]…] }
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function buildTree(tiles) {
+  const svg = $("tree");
+  svg.replaceChildren();
+  tree = null;
+  $("treeBox").hidden = !tiles?.statuses?.length;
+  clearTiles();
+  if (!tiles?.statuses?.length) return;
+  const st = tiles.statuses, n = st.length;
+  const levels = [st.slice()];
+  while (levels.at(-1).length > 1) {
+    const prev = levels.at(-1), next = [];
+    for (let i = 0; i < prev.length; i += 2) {
+      next.push(i + 1 < prev.length && RANK[prev[i + 1]] > RANK[prev[i]] ? prev[i + 1] : prev[i]);
+    }
+    levels.push(next);
+  }
+  const W = 1000, H = levels.length;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const rects = levels.map((lvl, k) => lvl.map((s, j) => {
+    const lo = j << k, hi = Math.min((j + 1) << k, n);
+    const r = document.createElementNS(SVGNS, "rect");
+    r.setAttribute("x", (lo / n) * W); r.setAttribute("width", ((hi - lo) / n) * W);
+    r.setAttribute("y", k); r.setAttribute("height", 1);
+    r.setAttribute("fill", COLORS[s] || "#888");
+    r.dataset.k = k; r.dataset.j = j;
+    svg.appendChild(r);
+    return r;
+  }));
+  tree = { st, n, cols: tiles.grid.cols, rows: tiles.grid.rows, levels, rects };
+}
+
+function clearTree() { $("tree").querySelectorAll(".path,.sib").forEach((r) => r.classList.remove("path", "sib")); }
+function tileCtx() {
+  const c = $("tileCanvas"), img = $("verifyPreview");
+  const w = img.clientWidth * devicePixelRatio, h = img.clientHeight * devicePixelRatio;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext("2d"); ctx.clearRect(0, 0, w, h); return ctx;
+}
+function clearTiles() { const c = $("tileCanvas"); c.getContext("2d").clearRect(0, 0, c.width, c.height); }
+function outlineTiles(lo, hi, color) {
+  const ctx = tileCtx(), c = $("tileCanvas"), tw = c.width / tree.cols, th = c.height / tree.rows;
+  ctx.fillStyle = "rgba(255,255,255,.18)"; ctx.strokeStyle = color; ctx.lineWidth = 2 * devicePixelRatio;
+  for (let i = lo; i < hi; i++) {
+    const x = (i % tree.cols) * tw, y = Math.floor(i / tree.cols) * th;
+    ctx.fillRect(x, y, tw, th); ctx.strokeRect(x + 1, y + 1, tw - 2, th - 2);
+  }
+}
+function showLeafPath(i) {
+  clearTree();
+  for (let k = 0, j = i; k < tree.levels.length; k++, j >>= 1) {
+    tree.rects[k][j].classList.add("path");
+    if ((j ^ 1) < tree.levels[k].length) tree.rects[k][j ^ 1].classList.add("sib");
+  }
+  outlineTiles(i, i + 1, "#fff");
+  const proof = tree.levels.slice(0, -1).filter((lvl, k) => ((i >> k) ^ 1) < lvl.length).length;
+  $("treeHint").textContent = `— tile #${i} (row ${Math.floor(i / tree.cols)}, col ${i % tree.cols}): ${tree.st[i]}, proof = ${proof} sibling hashes`;
+}
+function showNode(k, j) {
+  clearTree();
+  tree.rects[k][j].classList.add("path");
+  const lo = j << k, hi = Math.min((j + 1) << k, tree.n);
+  outlineTiles(lo, hi, "#fff");
+  $("treeHint").textContent = k === tree.levels.length - 1
+    ? `— root: commits to all ${tree.n} tiles, anchored on XRPL`
+    : `— level ${k} node: covers tiles ${lo}–${hi - 1} (${tree.levels[k][j]})`;
+}
+$("verifyStage").addEventListener("pointermove", (e) => {
+  if (!tree || !$("redactCanvas").hidden) return;
+  const r = $("verifyPreview").getBoundingClientRect();
+  const col = Math.floor(((e.clientX - r.left) / r.width) * tree.cols), row = Math.floor(((e.clientY - r.top) / r.height) * tree.rows);
+  if (col >= 0 && col < tree.cols && row >= 0 && row < tree.rows) showLeafPath(row * tree.cols + col);
+});
+$("verifyStage").addEventListener("pointerleave", () => { if (tree) { clearTree(); clearTiles(); } });
+$("tree").addEventListener("pointermove", (e) => {
+  const t = e.target.closest?.("rect"); if (tree && t) showNode(+t.dataset.k, +t.dataset.j);
+});
+$("tree").addEventListener("pointerleave", () => { if (tree) { clearTree(); clearTiles(); } });
+
+// Redaction (option): draw boxes in displayed coords, send them in image pixel coords.
+let lastEntry = null, boxes = [], drag = null;
+const cv = $("redactCanvas");
+function drawBoxes() {
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "rgba(0,0,0,.85)"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * devicePixelRatio;
+  for (const b of drag ? [...boxes, drag] : boxes) {
+    ctx.fillRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+    ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+  }
+  $("redactApply").disabled = boxes.length === 0;
+}
+function canvasPoint(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height];
+}
+function norm([x0, y0, x1, y1]) { return [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]; }
+cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); const p = canvasPoint(e); drag = [...p, ...p]; });
+cv.addEventListener("pointermove", (e) => { if (!drag) return; const p = canvasPoint(e); drag[2] = p[0]; drag[3] = p[1]; drawBoxes(); });
+cv.addEventListener("pointerup", () => {
+  if (!drag) return;
+  const b = norm(drag); drag = null;
+  if (b[2] - b[0] > 4 && b[3] - b[1] > 4) boxes.push(b);
+  drawBoxes();
+});
+function stopRedact() {
+  boxes = []; drag = null; cv.hidden = true; $("redactPanel").hidden = true;
+  $("redactDownload").hidden = true; $("redactErr").textContent = "";
+}
+$("redactStart").addEventListener("click", () => {
+  const img = $("verifyPreview");
+  cv.width = img.clientWidth * devicePixelRatio; cv.height = img.clientHeight * devicePixelRatio;
+  $("heatmapToggle").checked = false; applyHeatmapToggle();
+  boxes = []; cv.hidden = false; $("redactPanel").hidden = false; drawBoxes();
+});
+$("redactClear").addEventListener("click", () => { boxes = []; drawBoxes(); });
+$("redactApply").addEventListener("click", async () => {
+  const img = $("verifyPreview");
+  const sx = img.naturalWidth / cv.width, sy = img.naturalHeight / cv.height;
+  const px = boxes.map((b) => [Math.floor(b[0] * sx), Math.floor(b[1] * sy), Math.ceil(b[2] * sx), Math.ceil(b[3] * sy)]);
+  const fd = new FormData();
+  fd.append("image", verifyFile); fd.append("entry_id", lastEntry); fd.append("boxes", JSON.stringify(px));
+  const res = await post("/api/redact", fd, $("redactApply"), $("redactErr"));
+  if (!res) return;
+  const dl = $("redactDownload");
+  dl.href = safeUrl(res.image_url); dl.hidden = false;
+  // Re-verify the redacted image: redacted tiles should come back black but authenticated.
+  const blob = await fetch(res.image_url).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
+  if (!blob) { $("redactErr").textContent = "Redacted entry created, but its image could not be downloaded."; return; }
+  verifyFile = new File([blob], "redacted.png", { type: "image/png" });
+  img.src = URL.createObjectURL(blob);
+  $("txInput").value = res.entry_id;
+  $("verifyBtn").click();
+});
+</script>
+</body>
+</html>

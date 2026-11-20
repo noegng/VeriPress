@@ -24,3 +24,6 @@ Le cœur crypto (`commitment.py`, `pipeline.py`) appartient à Dev A : ne pas y 
 
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
+- **Ven. soir — marche :** `setup_testnet.py` (comptes + Credentials + `--revoke`/`--reissue`, testé sur Testnet), `XrplLedger` (test de fumée OK), `api.py` (toutes les routes, réponses simulées tant que `pipeline.py` lève `NotImplementedError`, en-tête `X-Tileproof-Mock`), `static/index.html` (Signer/Vérifier, heatmap, vérifié à 390 px).
+- **Reste :** retirer les mocks à la synchro quand `pipeline.py` est prêt ; passer la démo en `TILEPROOF_LEDGER=xrpl` ; options 6 (masquage) et 7 (arbre ↔ image).
+- **Lancer :** `cd backend && uv run python scripts/setup_testnet.py` (une fois) puis `uv run uvicorn tileproof.api:app --reload --host 0.0.0.0` → http://localhost:8000 (`?mock=real|edited|ai|unknown` pour forcer un verdict simulé). Smoke XRPL : `TILEPROOF_NET=1 uv run python -m pytest tests/test_ledger_xrpl.py`.
