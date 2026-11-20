@@ -146,6 +146,18 @@ def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
+# Shared by the app and the public link (verdict stamp + chain of evidence). A closed list:
+# nothing else under static/ is served by name.
+ASSETS = {"proofs.js": "text/javascript", "proofs.css": "text/css"}
+
+
+@app.get("/assets/{name}")
+def assets(name: str) -> FileResponse:
+    if name not in ASSETS:
+        raise HTTPException(404)
+    return FileResponse(STATIC / name, media_type=ASSETS[name])
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {

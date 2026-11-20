@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VeriPress</title>
+<link rel="stylesheet" href="/assets/proofs.css">
 <style>
   :root {
     --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
@@ -16,11 +17,25 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
     font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
-  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
-  h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+  .narrow { max-width: 760px; margin-left: auto; margin-right: auto; }
+  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  header.top { margin-bottom: 22px; }
+  .brand { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; margin-right: auto; }
   h1 span { color: var(--accent); }
-  .tag { color: var(--muted); font-size: 14px; }
+  .lede { font-size: 25px; line-height: 1.25; letter-spacing: -0.015em; font-weight: 600; margin: 14px 0 0; max-width: 40ch; text-wrap: balance; }
+  .lede small { display: block; font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 1.45; color: var(--muted); margin-top: 8px; max-width: 62ch; }
+  ol.steps { list-style: none; margin: 18px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; counter-reset: step; }
+  ol.steps li { position: relative; display: flex; gap: 10px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+  ol.steps li:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; z-index: 1;
+    border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); }
+  ol.steps .vp-i { color: var(--accent); margin-top: 1px; }
+  ol.steps b { display: block; }
+  ol.steps span { display: block; font-size: 13.5px; color: var(--muted); line-height: 1.35; }
+  .btn.small { padding: 7px 12px; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+  .btn .vp-i { width: 18px; height: 18px; vertical-align: -3px; }
   .pill { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
   .pill.warn { border-color: #f59f00; color: #f59f00; }
   ol.history { list-style: none; padding: 0; margin: 8px 0 0; border-left: 2px solid var(--line); }
@@ -87,14 +102,67 @@
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -3px; margin-right: 6px; }
   @keyframes s { to { transform: rotate(360deg); } }
   @media (max-width: 480px) { .counts { grid-template-columns: repeat(2, 1fr); } .badge strong { font-size: 22px; } }
+
+  /* Sign: one primary action, the rest folded */
+  label.drop .vp-i { width: 34px; height: 34px; color: var(--accent); display: block; margin: 0 auto 6px; }
+  label.drop.big { padding: 30px 12px; }
+  label.drop b { font-size: 17px; color: var(--ink); }
+  .btn.wide { width: 100%; padding: 15px 18px; font-size: 17px; }
+  .or { text-align: center; color: var(--muted); font-size: 14px; margin: 10px 0 0; }
+  details.adv { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+  details.adv > summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+  details.adv > summary small { font-weight: 400; color: var(--accent); }
+  details.adv h3 { font-size: 14px; margin: 18px 0 2px; color: var(--muted); font-weight: 600; }
+  details.adv input[type=text], details.adv input[type=file] { width: 100%; margin-top: 8px; }
+  .seg .vp-i { width: 18px; height: 18px; vertical-align: -4px; margin-right: 4px; }
+
+  /* Verify: the photo with its verdict stamp, then the chain of evidence */
+  .result-grid { display: grid; gap: 22px; }
+  .result-grid .stage { margin-top: 0; }
+  .reason { margin: 0 0 14px; font-size: 15px; color: var(--muted); }
+  details.tech { margin-top: 8px; font-size: 14px; }
+  details.tech > summary { cursor: pointer; color: var(--muted); }
+  @media (min-width: 900px) { .result-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; } }
+  @media (max-width: 600px) { ol.steps { grid-template-columns: 1fr; } ol.steps li:not(:last-child)::after { display: none; }
+    .lede { font-size: 21px; } }
+
+  /* Presentation mode (projector): bigger type, the result fills the screen */
+  html.present body { font-size: 19px; }
+  html.present main { max-width: 1500px; }
+  html.present .lede small, html.present ol.steps, html.present #status { display: none; }
+  html.present .lede { font-size: 26px; max-width: none; }
+  html.present .narrow { max-width: 980px; }
+  html.present .vp-stamp { left: 18px; top: 18px; padding: 12px 26px 12px 14px; }
+  html.present .vp-stamp strong { font-size: 34px; }
+  html.present .vp-stamp span { font-size: 17px; }
+  html.present .vp-stamp .vp-i { width: 42px; height: 42px; }
+  html.present .vp-chain b { font-size: 21px; }
+  html.present .vp-val { font-size: 19px; }
+  html.present .vp-why { font-size: 17px; }
+  html.present .vp-node { width: 48px; height: 48px; }
+  html.present .vp-chain li { grid-template-columns: 48px 1fr; }
+  html.present .vp-chain li:not(:last-child)::after { left: 23px; top: 56px; }
+  html.present .reason { font-size: 18px; }
+  html.present #presentBtn { border-color: var(--accent); }
+  @media (min-width: 900px) { html.present .result-grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
 </style>
 </head>
 <body>
 <main>
-  <header>
-    <h1>Veri<span>Press</span></h1>
-    <span class="tag">Image provenance anchored on XRPL</span>
-    <span class="pill" id="status" hidden></span>
+  <header class="top">
+    <div class="brand">
+      <h1>Veri<span>Press</span></h1>
+      <span class="pill" id="status" hidden></span>
+      <button class="btn ghost small" id="presentBtn" type="button" aria-pressed="false" title="Presentation mode (P)">
+        <svg class="vp-i" aria-hidden="true"><use href="#vp-present"/></svg><span>Present</span></button>
+    </div>
+    <p class="lede">Prove a photo is real, even after it went through WhatsApp.
+      <small>The capture device signs every tile of the image and anchors its fingerprint on the XRP Ledger. Anyone can check it later against that public record, with no account.</small></p>
+    <ol class="steps">
+      <li><svg class="vp-i" aria-hidden="true"><use href="#vp-device"/></svg><div><b>Sign</b><span>at capture, by an accredited device, anchored on XRPL</span></div></li>
+      <li><svg class="vp-i" aria-hidden="true"><use href="#vp-share"/></svg><div><b>Share</b><span>anywhere, even recompressed and stripped of metadata</span></div></li>
+      <li><svg class="vp-i" aria-hidden="true"><use href="#vp-verify"/></svg><div><b>Verify</b><span>real, edited or AI, with the edits pinpointed</span></div></li>
+    </ol>
   </header>
 
   <div class="tabs" role="tablist">
@@ -103,60 +171,59 @@
   </div>
 
   <section id="tab-sign">
-    <div class="card">
-      <label class="drop" id="signDrop">
+    <div class="card narrow">
+      <label class="drop big" id="signDrop">
         <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" capture="environment" id="signFile">
-        <div>📷 <b>Take or choose a photo</b><br><small id="signHint">Signed and anchored on XRPL</small></div>
+        <div><svg class="vp-i" aria-hidden="true"><use href="#vp-device"/></svg><b>Take or choose a photo</b><br><small id="signHint">Signed and anchored on XRPL</small></div>
       </label>
       <div class="stage" id="signStage" hidden><img id="signPreview" alt="Image to sign"></div>
       <div class="row">
-        <div class="seg">
-          <label><input type="radio" name="signer" value="device" checked><span>📱 Capture device</span></label>
-          <label><input type="radio" name="signer" value="ai"><span>🤖 AI generator</span></label>
+        <div class="seg" role="radiogroup" aria-label="Signer">
+          <label><input type="radio" name="signer" value="device" checked><span><svg class="vp-i" aria-hidden="true"><use href="#vp-device"/></svg>Capture device</span></label>
+          <label><input type="radio" name="signer" value="ai"><span><svg class="vp-i" aria-hidden="true"><use href="#vp-ai"/></svg>AI generator</span></label>
         </div>
       </div>
-      <label class="check" id="anonRow">
-        <input type="checkbox" id="anonInput">
-        <span>🕶️ <b>Sign anonymously</b><br><small>A zero-knowledge proof shows that an accredited device signed — not which one.</small></span>
-      </label>
       <div class="row">
-        <button class="btn" id="signBtn" disabled>Sign &amp; anchor</button>
+        <button class="btn wide" id="signBtn" disabled>Sign &amp; anchor on XRPL</button>
       </div>
       <div class="row" id="passkeyRow" hidden>
-        <button class="btn ghost" id="passkeyBtn" hidden disabled>🔑 Sign with passkey (Touch ID)</button>
-        <button class="btn ghost" id="passkeySetup" hidden>🔑 Set up this laptop's passkey (Touch ID)</button>
+        <button class="btn ghost" id="passkeyBtn" hidden disabled><svg class="vp-i" aria-hidden="true"><use href="#vp-key"/></svg> Sign with passkey (Touch ID)</button>
+        <button class="btn ghost" id="passkeySetup" hidden><svg class="vp-i" aria-hidden="true"><use href="#vp-key"/></svg> Set up this laptop's passkey (Touch ID)</button>
       </div>
-      <details class="more">
-        <summary>This image is a version of a signed image (edit, RAW development)</summary>
+      <details class="adv" id="advBox">
+        <summary>More options <small id="advState"></small></summary>
+        <label class="check" id="anonRow">
+          <input type="checkbox" id="anonInput">
+          <span><b>Sign anonymously</b><br><small>A zero-knowledge proof shows that an accredited device signed, not which one.</small></span>
+        </label>
+        <h3>Version of a signed image (edit, RAW development)</h3>
         <input type="text" id="parentInput" placeholder="tx hash of the original (version chain)" autocomplete="off" spellcheck="false">
         <label class="check">
           <input type="checkbox" id="developInput">
-          <span>🎞️ <b>Development of this RAW</b><br><small>The original is a RAW negative signed by this same device; this JPEG is its developed reference image.</small></span>
+          <span><b>Development of this RAW</b><br><small>The original is a RAW negative signed by this same device; this JPEG is its developed reference image.</small></span>
         </label>
-      </details>
-      <details class="more">
-        <summary>Sign several photos in one XRPL transaction (batch)</summary>
+        <h3>Several photos in one XRPL transaction (batch)</h3>
         <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" id="batchFiles" multiple>
         <div class="row"><button class="btn ghost" id="batchBtn" disabled>Sign &amp; anchor as one batch</button></div>
         <ul class="claims" id="batchList" hidden></ul>
       </details>
       <div class="err" id="signErr"></div>
     </div>
-    <div class="card" id="signResult" hidden>
-      <div class="badge v-real"><span class="dot">⛓️</span><div><strong>Anchored</strong><small id="signWhen"></small></div></div>
+    <div class="card narrow" id="signResult" hidden>
+      <div class="badge v-real"><svg class="vp-i dot" aria-hidden="true" style="width:36px;height:36px"><use href="#vp-chain"/></svg><div><strong>Anchored</strong><small id="signWhen"></small></div></div>
       <dl id="signInfo"></dl>
       <div class="row">
-        <a class="btn" id="signDownload" download>⬇ Download signed image</a>
-        <a class="btn ghost" id="signExplorer" target="_blank" rel="noopener">View on XRPL explorer ↗</a>
+        <a class="btn" id="signDownload" download><svg class="vp-i" aria-hidden="true"><use href="#vp-download"/></svg> Download signed image</a>
+        <a class="btn ghost" id="signExplorer" target="_blank" rel="noopener">View on XRPL explorer <svg class="vp-i" aria-hidden="true"><use href="#vp-external"/></svg></a>
       </div>
     </div>
   </section>
 
   <section id="tab-verify" hidden>
-    <div class="card">
-      <label class="drop" id="verifyDrop">
+    <div class="card narrow">
+      <label class="drop big" id="verifyDrop">
         <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" id="verifyFile">
-        <div>🔍 <b>Choose an image to verify</b><br><small>Even after WhatsApp / screenshots</small></div>
+        <div><svg class="vp-i" aria-hidden="true"><use href="#vp-verify"/></svg><b>Choose an image to verify</b><br><small>Even after WhatsApp or a screenshot</small></div>
       </label>
       <div class="row">
         <input type="text" id="txInput" placeholder="tx hash (optional)" autocomplete="off" spellcheck="false">
@@ -165,56 +232,77 @@
       <div class="err" id="verifyErr"></div>
     </div>
     <div class="card" id="verifyResult" hidden>
-      <div class="badge" id="badge"><span class="dot" id="badgeDot"></span><div><strong id="badgeTitle"></strong><small id="badgeReason"></small></div></div>
-      <div class="stage" id="verifyStage">
-        <img id="verifyPreview" alt="Verified image">
-        <img class="overlay" id="heatmap" alt="" hidden>
-        <canvas class="overlay passive" id="tileCanvas"></canvas>
-        <canvas class="overlay" id="redactCanvas" hidden></canvas>
+      <div class="result-grid">
+        <div>
+          <div class="stage" id="verifyStage">
+            <img id="verifyPreview" alt="Verified image">
+            <img class="overlay" id="heatmap" alt="" hidden>
+            <canvas class="overlay passive" id="tileCanvas"></canvas>
+            <canvas class="overlay" id="redactCanvas" hidden></canvas>
+            <div id="stamp"></div>
+          </div>
+          <div class="row" id="heatmapCtl" hidden>
+            <label><input type="checkbox" id="heatmapToggle" checked> Show tile heatmap</label>
+          </div>
+          <div class="legend" id="legend" hidden>
+            <span><i style="border:1px solid var(--muted)"></i>exact (no overlay)</span>
+            <span><i style="background:#fab005"></i>recompressed</span>
+            <span><i style="background:#e8590c"></i>changed</span>
+            <span><i style="background:#000"></i>redacted</span>
+          </div>
+          <div class="counts" id="counts"></div>
+          <div class="row" id="redactCtl" hidden>
+            <button class="btn ghost" id="redactStart"><svg class="vp-i" aria-hidden="true"><use href="#vp-edit"/></svg> Redact areas</button>
+          </div>
+          <div id="redactPanel" hidden>
+            <p class="hint">Drag on the image to black out areas (e.g. faces). The rest stays verifiable.</p>
+            <div class="row">
+              <button class="btn" id="redactApply" disabled>Redact &amp; re-verify</button>
+              <button class="btn ghost" id="redactClear">Clear</button>
+              <a class="btn ghost" id="redactDownload" download hidden><svg class="vp-i" aria-hidden="true"><use href="#vp-download"/></svg> Download redacted</a>
+            </div>
+            <div class="err" id="redactErr"></div>
+          </div>
+        </div>
+        <div>
+          <p class="reason" id="badgeReason"></p>
+          <div id="chain"></div>
+          <details class="tech"><summary>Technical details</summary><dl id="verifyInfo"></dl></details>
+        </div>
       </div>
-      <div class="row" id="heatmapCtl" hidden>
-        <label><input type="checkbox" id="heatmapToggle" checked> Show tile heatmap</label>
-      </div>
-      <div class="legend" id="legend" hidden>
-        <span><i style="border:1px solid var(--muted)"></i>exact (no overlay)</span>
-        <span><i style="background:#fab005"></i>recompressed</span>
-        <span><i style="background:#e8590c"></i>changed</span>
-        <span><i style="background:#000"></i>redacted</span>
-      </div>
-      <div class="counts" id="counts"></div>
       <div id="treeBox" hidden>
         <h2 class="sub">Merkle tree <small id="treeHint">— tap a tile or a node</small></h2>
-        <div class="treeaxis">⛓️ root — anchored on XRPL</div>
+        <div class="treeaxis">Root — anchored on XRPL</div>
         <svg id="tree" preserveAspectRatio="none" role="img" aria-label="Merkle tree of the image tiles"></svg>
-        <div class="treeaxis" id="treeLeaves">▦ leaves — one per tile</div>
-      </div>
-      <dl id="verifyInfo"></dl>
-      <div id="claimsBox" hidden>
-        <h2 class="sub">Proven claims <small>— zero-knowledge, exact time and place stay private</small></h2>
-        <ul class="claims" id="claims"></ul>
+        <div class="treeaxis" id="treeLeaves">Leaves — one per tile</div>
       </div>
       <div id="historyBox" hidden>
         <h2 class="sub">Version history</h2>
         <ol class="history" id="history"></ol>
       </div>
-      <div class="row" id="redactCtl" hidden>
-        <button class="btn ghost" id="redactStart">✏️ Redact areas</button>
-      </div>
-      <div id="redactPanel" hidden>
-        <p class="hint">Drag on the image to black out areas (e.g. faces). The rest stays verifiable.</p>
-        <div class="row">
-          <button class="btn" id="redactApply" disabled>Redact &amp; re-verify</button>
-          <button class="btn ghost" id="redactClear">Clear</button>
-          <a class="btn ghost" id="redactDownload" download hidden>⬇ Download redacted</a>
-        </div>
-        <div class="err" id="redactErr"></div>
-      </div>
     </div>
   </section>
 </main>
 
+<script src="/assets/proofs.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
+VeriProof.sprite(); // icons used by the static markup and the chain of evidence
+
+// Presentation mode (projector): bigger type, the result fills the screen. Button or "P".
+function setPresent(on) {
+  document.documentElement.classList.toggle("present", on);
+  $("presentBtn").setAttribute("aria-pressed", String(on));
+  try { localStorage.setItem("vp-present", on ? "1" : ""); } catch { /* private mode */ }
+  if (on && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  if (!on && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+}
+$("presentBtn").addEventListener("click", () => setPresent(!document.documentElement.classList.contains("present")));
+document.addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() !== "p" || e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  setPresent(!document.documentElement.classList.contains("present"));
+});
+try { if (localStorage.getItem("vp-present") || new URLSearchParams(location.search).has("present")) setPresent(true); } catch { /* ignore */ }
 
 let ONCHAIN = false; // set from /api/health: real XRPL ledger vs offline demo ledger
 const EXPLORER = "https://testnet.xrpl.org/transactions/";
@@ -236,41 +324,12 @@ async function watchValidation(tx) {
 }
 // Shareable read-only page (/v/<entry_id>) with social preview tags.
 function publicLink(id) {
-  return id ? `<a href="/v/${encodeURIComponent(id)}" target="_blank" rel="noopener">🔗 /v/${esc(short(id))} ↗</a>` : null;
+  return id ? `<a href="/v/${encodeURIComponent(id)}" target="_blank" rel="noopener">/v/${esc(short(id))}${VeriProof.icon("external", "vp-i vp-ext")}</a>` : null;
 }
 // Explorer link only on the real ledger; offline the hash is shown without a dead link.
 function txLink(hash, url) {
   const code = `<code>${esc(short(hash))}</code>`;
-  return ONCHAIN ? `<a href="${esc(safeUrl(url || EXPLORER + hash))}" target="_blank" rel="noopener">${code} ↗</a>` : code;
-}
-// Hybrid signature: Ed25519 + ML-DSA-87 (FIPS 204), the key attested in the device's credential.
-function pqRow(pq) {
-  if (!pq) return null;
-  if (!pq.signature_ok) return "❌ ML-DSA-87 signature invalid";
-  if (!pq.attested) return "❌ ML-DSA-87 key not attested by the registry";
-  return "🔐 hybrid Ed25519 + ML-DSA-87 ✅ · key attested by the registry";
-}
-// C2PA (Content Credentials) is shown as information, never as proof (security-review.md):
-// anyone can forge a manifest pointing to any anchor; the verdict comes from VeriPress alone.
-function c2paRow(r) {
-  const c = r.c2pa;
-  if (c) {
-    const where = c.matches_anchor ? "points to this same XRPL anchor" : "points to another anchor";
-    const signer = c.signer_trusted ? "signer on the C2PA trust list" : "signer not on the C2PA trust list (test certificate)";
-    return `ℹ️ Content Credentials manifest present — ${where} · ${signer}`;
-  }
-  return r.entry_id && r.found_by !== "tx_hash"
-    ? "ℹ️ no C2PA manifest in this file (metadata stripped when shared) — provenance recovered from the pixels"
-    : null;
-}
-// [T0, T1]: the signed manifest names the latest validated ledger (its hash cannot be known
-// before it closed), and the anchor's ledger closed after the signature.
-function timeWindow(tw) {
-  if (!tw || tw.ledger_index == null) return null;
-  const n = Number(tw.ledger_index);
-  const led = ONCHAIN ? `<a href="https://testnet.xrpl.org/ledgers/${n}" target="_blank" rel="noopener">ledger #${n} ↗</a>` : `ledger #${n}`;
-  if (!tw.t0_ok) return `⚠️ T0 ${led} not confirmed by the ledger (unknown ledger or wrong hash)`;
-  return `🕐 ${esc(fmtTime(tw.not_before))} → ${esc(fmtTime(tw.not_after))} (${Math.max(0, tw.not_after - tw.not_before)} s) · after ${led}`;
+  return ONCHAIN ? `<a href="${esc(safeUrl(url || EXPLORER + hash))}" target="_blank" rel="noopener">${code}${VeriProof.icon("external", "vp-i vp-ext")}</a>` : code;
 }
 
 // Readiness pill: which ledger, and whether TrustMark has finished loading (check before demoing).
@@ -279,7 +338,7 @@ async function pollStatus() {
     const h = await fetch("/api/health").then((r) => r.json());
     ONCHAIN = h.ledger === "XrplLedger";
     $("signHint").textContent = ONCHAIN ? "Signed and anchored on XRPL Testnet" : "Signed and anchored on the offline demo ledger";
-    const net = ONCHAIN ? "⛓️ XRPL Testnet" : "offline ledger";
+    const net = ONCHAIN ? "XRPL Testnet" : "offline ledger";
     const wm = !h.watermark ? "watermark off" : { ready: "watermark ready", loading: "loading watermark…", failed: "watermark failed" }[h.watermark_ready] || "watermark";
     const s = $("status");
     s.textContent = `${net} · ${wm}`; s.hidden = false;
@@ -288,13 +347,6 @@ async function pollStatus() {
   } catch { setTimeout(pollStatus, 5000); }
 }
 pollStatus();
-
-const VERDICTS = {
-  real:    { dot: "🟢", title: "Real",         cls: "v-real" },
-  edited:  { dot: "🟠", title: "Edited",       cls: "v-edited" },
-  ai:      { dot: "🔵", title: "AI-generated", cls: "v-ai" },
-  unknown: { dot: "⚪", title: "Unknown",      cls: "v-unknown" },
-};
 
 // Tabs
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
@@ -359,7 +411,14 @@ function syncAnon() {
   $("anonInput").disabled = ai;
   if (ai) $("anonInput").checked = false;
   $("anonRow").classList.toggle("off", ai);
+  syncAdv();
 }
+// "More options" stays folded: its summary line names the options that are on.
+function syncAdv() {
+  const on = [$("anonInput").checked && "anonymous", $("parentInput").value.trim() && ($("developInput").checked ? "RAW development" : "version of a signed image")];
+  $("advState").textContent = on.filter(Boolean).length ? "· " + on.filter(Boolean).join(" · ") : "";
+}
+["anonInput", "parentInput", "developInput"].forEach((id) => $(id).addEventListener("input", syncAdv));
 document.querySelectorAll("input[name=signer]").forEach((r) => r.addEventListener("change", syncAnon));
 syncAnon();
 
@@ -534,11 +593,9 @@ $("verifyBtn").addEventListener("click", async () => {
 });
 
 function showReport(r) {
-  const v = VERDICTS[r.verdict] || VERDICTS.unknown;
-  $("badge").className = "badge " + v.cls;
-  $("badgeDot").textContent = v.dot;
-  $("badgeTitle").textContent = r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)"
-    : r.verdict === "real" && r.anonymous ? "Real — accredited device (anonymous)" : v.title;
+  // The verdict stamped on the photo, then each guarantee as a link of the chain (proofs.js).
+  $("stamp").innerHTML = VeriProof.stamp(r);
+  $("chain").innerHTML = VeriProof.chain(r, { onchain: ONCHAIN });
   $("badgeReason").textContent = r.reason || "";
 
   const hm = $("heatmap");
@@ -551,39 +608,24 @@ function showReport(r) {
   $("counts").innerHTML = c ? [["exact", "exact"], ["robust", "recompressed"], ["changed", "changed"], ["redacted", "redacted"]]
     .map(([k, l]) => `<div><b>${Number(c[k] || 0)}</b><span>${l}</span></div>`).join("") : "";
 
+  // Technical details, folded: what a curious juror (or a developer) can check by hand.
   const a = r.anchor;
   $("verifyInfo").innerHTML = rows([
-    ["Found by", r.found_by && esc({ tx_hash: "tx hash", watermark: "invisible watermark", phash: "perceptual hash" }[r.found_by] || r.found_by)],
-    ["Credential", r.credential && esc(r.credential)],
-    // Non-retroactive revocation: the photo was anchored while the device was trusted.
-    ["Device status", r.credential_revoked_at ? `⚠️ revoked since ${esc(fmtTime(r.credential_revoked_at))} (after this photo was anchored)` : null],
-    ["Signature", !r.entry_id ? null
-      : r.zk ? (r.zk.proof_ok ? "✅ zero-knowledge proof valid" : "❌ zero-knowledge proof invalid")
-      : r.signature_ok ? "✅ valid" : "❌ invalid"],
-    ["Registry root", r.zk && `<code>${esc(short(r.zk.registry_root))}</code> · ${r.zk.root_valid_at_anchor ? "✅ in force when anchored" : "❌ not in force when anchored"}`],
-    ["Post-quantum", pqRow(r.post_quantum)],
-    ["Signed between", timeWindow(r.time_window)],
-    ["Anchored", a && esc(fmtTime(a.timestamp))],
-    ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
-    // Aggregated anchoring: one transaction for N photos, a Merkle receipt per photo.
-    ["Batch", r.batch && `photo ${Number(r.batch.index) + 1} of ${Number(r.batch.size)} in one transaction · Merkle receipt ✅`],
-    ["C2PA", c2paRow(r)],
-    ["Disclosure CID", r.disclosure_cid && `<code title="${esc(r.disclosure_cid)}">${esc(short(r.disclosure_cid))}</code>`],
     ["Public link", r.verdict !== "unknown" && r.entry_id && publicLink(r.entry_id)],
-    ["Signer key", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "🕶️ hidden (anonymous)" : null)],
+    ["Found by", r.found_by && esc({ tx_hash: "tx hash", watermark: "invisible watermark", phash: "perceptual hash" }[r.found_by] || r.found_by)],
+    ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
+    ["Anchored", a && esc(fmtTime(a.timestamp))],
+    ["Signer key", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "hidden (anonymous)" : null)],
+    ["Registry root", r.zk && `<code>${esc(short(r.zk.registry_root))}</code>`],
+    ["Disclosure CID", r.disclosure_cid && `<code title="${esc(r.disclosure_cid)}">${esc(short(r.disclosure_cid))}</code>`],
     ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
   ]);
-  // Claims proven in zero knowledge from the signed metadata commitment (ZK B): never the
-  // exact time or position, only "taken on day D" / "within ~10 km of …".
-  const claims = r.meta_claims || [];
-  $("claimsBox").hidden = claims.length === 0;
-  $("claims").innerHTML = claims.map((c) => `<li>${c.proof_ok ? "✅" : "❌"} ${esc({ day: "Taken on", area: "Taken within" }[c.kind] || c.kind)} <b>${esc(c.label)}</b></li>`).join("");
-  const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", develop: "🎞️ Developed from the signed RAW", ai_generate: "🤖 AI-generated" };
+  const OPS = { capture: "Captured", edit: "Signed edit", develop: "Developed from the signed RAW", ai_generate: "AI-generated" };
   const hist = r.history || [];
   $("historyBox").hidden = hist.length < 2;
   $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))}
-    · ${txLink(h.tx_hash)}${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
-  if (r.tiles) $("treeLeaves").textContent = `▦ leaves — ${r.tiles.grid.cols * r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}×${r.tiles.grid.tile} px`;
+    · ${txLink(h.tx_hash)}${h.verified ? "" : " · not verified"}</li>`).join("");
+  if (r.tiles) $("treeLeaves").textContent = `Leaves — ${r.tiles.grid.cols * r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}×${r.tiles.grid.tile} px`;
   // Fast anchoring: a provisional verdict is re-checked a few times until the anchor validates.
   if (r.pending && pendingRetries < 8) {
     pendingRetries++;

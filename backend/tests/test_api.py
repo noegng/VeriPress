@@ -471,3 +471,13 @@ def test_batch_limits(client):
     # nothing signable (the AI key is never in the anonymous registry) -> 422, no transaction
     r = client.post("/api/sign/batch", files=[one], data={"signer": "ai", "anonymous": "1"})
     assert r.status_code == 422
+
+
+def test_shared_assets_are_a_closed_list(client):
+    js = client.get("/assets/proofs.js")
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"] and "VeriProof" in js.text
+    assert client.get("/assets/proofs.css").status_code == 200
+    for bad in ("index.html", "view.html", "..%2Fapi.py", "nope.js"):
+        assert client.get(f"/assets/{bad}").status_code == 404
+    page = client.get("/").text
+    assert "/assets/proofs.js" in page and "/assets/proofs.css" in page
