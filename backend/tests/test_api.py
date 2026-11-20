@@ -292,3 +292,77 @@ def test_fast_anchoring_flag_and_anchor_status(client, signed):
     assert s["tx_hash"] == tx and s["validated"] is True
     assert client.get(f"/api/anchor/{'AB' * 32}").status_code == 404
     assert client.get("/api/anchor/xyz").status_code == 422
+
+
+# --- passkey (phase 2 task 6) ----------------------------------------------------------------
+
+def _spki_b64url(private_key) -> str:
+    import base64
+
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    der = private_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    return base64.urlsafe_b64encode(der).rstrip(b"=").decode()
+
+
+def test_passkey_registration_is_localhost_only(client):
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    body = {"credential_id": "AAEC", "public_key": _spki_b64url(ec.generate_private_key(ec.SECP256R1()))}
+    assert client.post("/api/passkey/register", json=body).status_code == 403  # TestClient is not 127.0.0.1
+
+
+def test_passkey_registration_stores_the_sec1_key_and_its_hash(client, monkeypatch):
+    import hashlib
+
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    import veripress.api as api
+
+    monkeypatch.setattr(api, "LOCAL_CLIENTS", api.LOCAL_CLIENTS | {"testclient"})
+    key = ec.generate_private_key(ec.SECP256R1())
+    r = client.post("/api/passkey/register", json={"credential_id": "AAEC", "public_key": _spki_b64url(key)})
+    assert r.status_code == 200, r.text
+    sec1 = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    assert r.json()["sha256"] == hashlib.sha256(sec1).hexdigest()
+    status = client.get("/api/passkey").json()
+    assert status["registered"] and status["credential_id"] == "AAEC" and status["attested"] is False
+
+    wrong = _spki_b64url(ed25519.Ed25519PrivateKey.generate())
+    assert client.post("/api/passkey/register", json={"credential_id": "AAEC", "public_key": wrong}).status_code == 422
+    assert client.post("/api/passkey/register", json={"credential_id": "AAEC", "public_key": "!!"}).status_code == 422
+
+
+def test_passkey_signing_routes_until_and_once_the_pipeline_supports_it(client, signed, monkeypatch):
+    import veripress.api as api
+
+    for name in ("prepare_passkey_sign", "complete_passkey_sign"):
+        monkeypatch.delattr(api.pipeline, name, raising=False)
+    img = {"image": ("a.png", png(np.full((64, 64, 3), 70, np.uint8)), "image/png")}
+    assert client.post("/api/sign/passkey/prepare", files=img).status_code == 503
+    assert client.post("/api/sign/passkey/complete", json={"prep_id": "x", "assertion": {}}).status_code == 503
+
+    # plumbing with a stand-in pipeline: what the page sends reaches it, errors map to HTTP codes
+    seen = {}
+
+    def prepare(rgb, store, parent=None, exif=None):
+        seen["prepare"] = (rgb.shape, parent)
+        return {"prep_id": "P1", "challenge": "ab" * 32}
+
+    def complete(prep_id, assertion, ledger, store):
+        if prep_id != "P1":
+            raise KeyError(prep_id)
+        if assertion.get("signature") != "good":
+            raise ValueError("assertion does not verify")
+        return api.pipeline.SignResult(signed[0]["entry_id"], ledger.fetch_anchor(signed[0]["tx_hash"]),
+                                       api.app.state.store.get(signed[0]["entry_id"]).manifest), b""
+
+    monkeypatch.setattr(api.pipeline, "prepare_passkey_sign", prepare, raising=False)
+    monkeypatch.setattr(api.pipeline, "complete_passkey_sign", complete, raising=False)
+    assert client.post("/api/sign/passkey/prepare", files=img).json() == {"prep_id": "P1", "challenge": "ab" * 32}
+    assert seen["prepare"] == ((64, 64, 3), None)
+    assert client.post("/api/sign/passkey/complete", json={"prep_id": "nope", "assertion": {}}).status_code == 404
+    assert client.post("/api/sign/passkey/complete", json={"prep_id": "P1", "assertion": {"signature": "bad"}}).status_code == 422
+    ok = client.post("/api/sign/passkey/complete", json={"prep_id": "P1", "assertion": {"signature": "good"}})
+    assert ok.status_code == 200 and ok.json()["passkey"] is True
