@@ -50,6 +50,7 @@ class Manifest:
     anonymous: bool = False  # signed with a zero-knowledge device attestation (signer = "")
     meta_commitment: str | None = None  # Poseidon commitment to EXIF time + GPS (ZK B)
     passkey: str | None = None  # P-256 public key (SEC1 hex) when signed with a passkey
+    t0: dict | None = None  # {"ledger_index", "ledger_hash"}: latest validated XRPL ledger at signing
     v: int = VERSION
 
     @property

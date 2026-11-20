@@ -67,6 +67,10 @@ Le projet s'appelle maintenant **VeriPress**, et les identifiants techniques son
 
 Les anciens ancrages Testnet et les anciens `store/` ne se vérifient plus : il faut re-signer les photos de démo. Dev A a déjà relancé `setup_testnet.py` (racine du registre republiée sous le nouveau Memo). **Ta branche `dev-b/anonymous-ui`** : fais `git merge origin/main` dedans (git suit le déplacement `src/tileproof` → `src/veripress`), puis renomme dans ton code les éventuels `tileproof` restants.
 
+## Fenêtre de temps T0 / T1 (Dev A, 20/11 ~17 h)
+
+Contrat dans `interfaces.md` § « Fenêtre de temps ». À faire : `XrplLedger.latest_validated()` (requête `ledger`, `ledger_index="validated"` → index, hash, close time) et `ledger_close_time(index, hash)` (requête `ledger` à cet index ; renvoyer `None` si le hash diffère ou si le ledger n'est pas validé). Puis afficher `time_window` dans la page et sur `/v/<id>`. Tant que ce n'est pas fait, la signature se fait sans T0, et `t0_ok` vaut false.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. ~13 h — phase 1 :** script Testnet, `XrplLedger`, API (branchée sur le vrai pipeline), page (signer / vérifier, heatmap, masquage, arbre ↔ image, historique, lien public), retours de revue 1–7. Répétition complète en `xrpl` + filigrane : les 6 étapes passent.

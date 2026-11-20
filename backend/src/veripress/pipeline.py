@@ -95,6 +95,7 @@ class Report:
     passkey: bool = False
     meta_claims: list[dict] = field(default_factory=list)
     pending: bool = False
+    time_window: dict | None = None  # {"not_before", "not_after", "ledger_index", "t0_ok"}
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
         """Shape: docs/interfaces.md "POST /api/verify"."""
@@ -124,6 +125,7 @@ class Report:
             "passkey": self.passkey,
             "meta_claims": self.meta_claims,
             "pending": self.pending,
+            "time_window": self.time_window,
             "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
         }
 
@@ -179,6 +181,7 @@ def sign_image(
     manifest.anonymous = anonymous
     manifest.op = "ai_generate" if signer == "ai" else ("edit" if parent else "capture")
     manifest.parent = parent
+    manifest.t0 = _latest_ledger(ledger)
     capture = metadata.read_capture(exif)
     salt = os.urandom(31).hex() if capture else None  # never stored: only the claims are published
     if capture:
@@ -219,6 +222,28 @@ def _meta_claims(manifest: Manifest, stored: list[dict]) -> list[dict]:
         ok = str(public[0]) == manifest.meta_commitment and zk.verify_meta(c.get("proof", {}), public)
         out.append({"kind": kind, "label": label, "proof_ok": bool(ok)})
     return out
+
+
+def _latest_ledger(ledger: Ledger) -> dict | None:
+    """T0: latest validated ledger at signing time (None if the ledger cannot tell)."""
+    try:
+        index, ledger_hash, _ = ledger.latest_validated()
+    except Exception:  # noqa: BLE001 — not implemented / network: sign without a lower bound
+        return None
+    return {"ledger_index": int(index), "ledger_hash": str(ledger_hash).upper()}
+
+
+def _time_window(manifest: Manifest, anchor: Anchor, ledger: Ledger) -> dict:
+    """[T0, T1]: signed after ledger T0 closed (its hash was in the signed manifest), anchored at T1."""
+    not_before, index = None, None
+    if manifest.t0:
+        index = manifest.t0.get("ledger_index")
+        try:
+            not_before = ledger.ledger_close_time(int(index), str(manifest.t0.get("ledger_hash", "")))
+        except Exception:  # noqa: BLE001
+            not_before = None
+    return {"not_before": not_before, "not_after": anchor.timestamp, "ledger_index": index,
+            "t0_ok": not_before is not None}
 
 
 def _check_anonymous(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledger: Ledger) -> dict:
@@ -338,6 +363,7 @@ def verify_image(
         verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history,
         anonymous=anchor.anonymous, zk=zk_check, credential_revoked_at=revoked_at,
         pending=not anchor.validated,
+        time_window=_time_window(manifest, anchor, ledger),
         # Claims describe the signed capture: only shown when the verdict ties this image to it.
         meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
     )
