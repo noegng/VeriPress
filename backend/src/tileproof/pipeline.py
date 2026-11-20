@@ -24,7 +24,7 @@ import numpy as np
 from PIL import Image
 
 from .tiling import Grid
-from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, verify
+from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
 from .signing import load_key, verify_signature
@@ -168,4 +168,16 @@ def redact_image(
     rgb: np.ndarray, entry_id: str, boxes: list[tuple[int, int, int, int]], store: Store
 ) -> tuple[str, bytes]:
     """Black out boxes, store a redacted variant entry. Returns (new_entry_id, png)."""
-    raise NotImplementedError
+    entry = store.get(entry_id)
+    if entry is None:
+        raise KeyError(entry_id)
+    grid = entry.manifest.grid
+    tiles = {i for box in boxes for i in grid.tiles_in_box(*box)}
+    out, disclosure = redact(rgb, entry.manifest, entry.disclosure, tiles)
+    n = 1
+    while store.get(f"{entry.tx_hash}-r{n}") is not None:
+        n += 1
+    new_id = f"{entry.tx_hash}-r{n}"
+    png = _png(out)
+    store.put(Entry(new_id, entry.tx_hash, entry.manifest, disclosure, phash(out)), png)
+    return new_id, png

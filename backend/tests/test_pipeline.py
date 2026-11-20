@@ -9,7 +9,7 @@ from xrpl.constants import CryptoAlgorithm
 from xrpl.wallet import Wallet
 
 from tileproof.ledger import CredentialType, FakeLedger
-from tileproof.pipeline import FinalVerdict, sign_image, verify_image
+from tileproof.pipeline import FinalVerdict, redact_image, sign_image, verify_image
 from tileproof.store import Store
 
 
@@ -190,3 +190,22 @@ def test_sign_result_json_matches_api_contract(photo, ledger, store):
     assert j["image_url"] == f"/api/files/{signed.entry_id}.png"
     assert j["digest"] == signed.manifest.digest()
     assert set(j["roots"]) == {"exact", "robust"}
+
+
+def test_redacted_copy_stays_real_with_hidden_tiles(photo, ledger, store):
+    signed, png = sign_image(photo, "device", ledger, store)
+    rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(64, 64, 160, 128)], store)
+    assert rid == f"{signed.entry_id}-r1"
+    red = png_to_rgb(red_png)
+    assert (red[64:128, 64:160] == 0).all()
+    report, _ = verify_image(red, ledger, store, entry_id=rid)
+    assert report.verdict == FinalVerdict.REAL
+    assert report.tiles.counts()["redacted"] == 3 * 2
+    assert report.anchor.tx_hash == signed.entry_id  # same anchor as the original
+
+
+def test_redacted_copy_is_found_by_phash(photo, ledger, store):
+    signed, png = sign_image(photo, "device", ledger, store)
+    rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(0, 0, 320, 240)], store)
+    report, _ = verify_image(jpeg(png_to_rgb(red_png), 80), ledger, store)
+    assert report.entry_id == rid and report.verdict == FinalVerdict.REAL
