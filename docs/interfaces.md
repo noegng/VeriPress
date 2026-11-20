@@ -244,3 +244,12 @@ N enregistrements signés, **une** transaction XRPL. La signature de chaque phot
 - Ledger (Dev B pour `XrplLedger`) : `anchor_batch(root, count, wait=True) -> Anchor`, Memo `veripress/v1` `{"b": root, "n": count}`. `fetch_anchor` d'une telle transaction renvoie `Anchor(digest=root, batch_size=count, signature="", pubkey="")`.
 - `/api/verify` : nouvelle clé `"batch": {"tx_hash", "index", "size"} | null`.
 - Démo : `uv run python -m veripress.cli demo-batch photos… -o out/`.
+
+## Signature hybride post-quantique (Ed25519 + ML-DSA-87)
+
+Comme la signature hybride ML-DSA-87 + RSA d'Apple Reference Image, avec ML-DSA natif dans `cryptography` ≥ 44 (FIPS 204).
+- Clés : `keys/<device|ai>.json["mldsa"] = {"public_key": hex brut (2 592 o), "private_pem": PKCS8 PEM}`.
+- Attestation par le registre : l'`URI` du Credential porte `mldsa87:sha256:<hex>`, séparé par `;` d'un éventuel `passkey:sha256:<hex>`, par exemple `passkey:sha256:ab…;mldsa87:sha256:cd…`.
+- Ledger : `credential_pq(pubkey) -> sha256 hex | None` (Dev B pour `XrplLedger`).
+- Signature : si la clé ML-DSA de l'appareil est **attestée**, le manifeste signé contient `pq_pubkey_sha256`, et `store/<id>/pq.json = {alg: "ML-DSA-87", public_key, signature}` (4,6 Ko : trop gros pour le Memo de 1 Ko). Jamais en mode anonyme (la clé identifierait l'appareil). Clé non attestée → signature Ed25519 seule.
+- Vérification : un manifeste qui déclare la clé **exige** une signature ML-DSA valide et la clé attestée, sinon `unknown` (pas de rétrogradation). Nouvelle clé JSON `"post_quantum": {"alg", "signature_ok", "attested"} | null`. Le motif ajoute « hybrid post-quantum signature (Ed25519 + ML-DSA-87) ».
