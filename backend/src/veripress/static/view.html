@@ -95,6 +95,14 @@ function txLink(hash, url) {
   const code = `<code>${esc(short(hash))}</code>`;
   return onChain ? `<a href="${esc(url || "https://testnet.xrpl.org/transactions/" + hash)}" target="_blank" rel="noopener">${code} ↗</a>` : code;
 }
+// [T0, T1]: signed after ledger T0 closed (its hash is in the signed manifest), anchored at T1.
+function timeWindow(tw) {
+  if (!tw || tw.ledger_index == null) return null;
+  const n = Number(tw.ledger_index);
+  const led = onChain ? `<a href="https://testnet.xrpl.org/ledgers/${n}" target="_blank" rel="noopener">ledger #${n} ↗</a>` : `ledger #${n}`;
+  if (!tw.t0_ok) return `⚠️ T0 ${led} not confirmed by the ledger`;
+  return `🕐 ${esc(fmtTime(tw.not_before))} → ${esc(fmtTime(tw.not_after))} (${Math.max(0, tw.not_after - tw.not_before)} s) · after ${led}`;
+}
 $("badge").className = "badge " + cls; $("dot").textContent = dot;
 $("title").textContent = r.verdict === "real" && r.anonymous ? "Real — accredited device (anonymous)" : r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)" : label;
 $("reason").textContent = r.pending ? "⏳ " + r.reason : r.reason;
@@ -110,6 +118,7 @@ $("info").innerHTML = [
   ["Device status", r.credential_revoked_at && `⚠️ revoked since ${esc(fmtTime(r.credential_revoked_at))} (after this image was anchored)`],
   ["Signature", r.zk ? (r.zk.proof_ok ? "✅ zero-knowledge proof valid" : "❌ zero-knowledge proof invalid") : r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
   ["Signer", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "🕶️ anonymous accredited device" : null)],
+  ["Signed between", timeWindow(r.time_window)],
   ["Anchored", a && esc(fmtTime(a.timestamp))],
   ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
   ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.counts.exact + r.tiles.counts.robust}/${r.tiles.statuses.length} match`)],
