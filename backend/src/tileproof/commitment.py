@@ -26,6 +26,8 @@ from .tiling import DEFAULT_TILE, Grid, grid_for, resize_to, tile_pixels
 EXACT_DOMAIN = b"TPX1"
 ROBUST_DOMAIN = b"TPR1"
 VERSION = 1
+REDACTED_MAX_MEAN = 16  # a redacted tile is black; JPEG keeps it far below these bounds
+REDACTED_MAX_P95 = 48
 
 
 # ---------------------------------------------------------------- data model
@@ -41,6 +43,10 @@ class Manifest:
     feature: dict = field(
         default_factory=lambda: {"pool": F.POOL, "n": F.N_COEFFS, "step": F.STEP}
     )
+    signer: str = ""  # XRPL ed25519 public key ("ED…") of the signing device / generator
+    op: str = "capture"  # capture | ai_generate | edit
+    parent: str | None = None  # tx hash of the version this one was edited from
+    wm_id: str = ""  # hex 64-bit watermark lookup id embedded in the pixels ("" = none)
     v: int = VERSION
 
     @property
@@ -204,8 +210,12 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
     distances: list[float] = []
     for t in tiles:
         if t.redacted:
-            statuses.append(TileStatus.REDACTED)
-            distances.append(0.0)
+            # Authenticated by hash only: the received pixels must really be blacked out,
+            # otherwise anything could be pasted under a "redacted" label.
+            px = tile_pixels(rgb, grid, t.i)
+            hidden = px.mean() <= REDACTED_MAX_MEAN and np.percentile(px, 95) <= REDACTED_MAX_P95
+            statuses.append(TileStatus.REDACTED if hidden else TileStatus.CHANGED)
+            distances.append(0.0 if hidden else float("inf"))
             continue
         dist = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.f]))[0])
         distances.append(dist)

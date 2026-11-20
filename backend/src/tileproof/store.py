@@ -63,6 +63,18 @@ class Store:
     def image_path(self, entry_id: str) -> Path:
         return self.root / entry_id / "image.png"
 
+    def find_by_watermark(self, wm_id: str, phash: int) -> Entry | None:
+        """Entries whose manifest carries this watermark id (original + redacted variants):
+        return the one closest to `phash`."""
+        best: tuple[int, str] | None = None
+        for p in self.root.glob("*/entry.json"):
+            d = json.loads(p.read_text())
+            if d["manifest"].get("wm_id") == wm_id:
+                dist = (phash ^ int(d["phash"], 16)).bit_count()
+                if best is None or dist < best[0]:
+                    best = (dist, d["id"])
+        return self.get(best[1]) if best else None
+
     def nearest(self, phash: int, max_distance: int = 10) -> Entry | None:
         """Closest entry by Hamming distance on the perceptual hash, if within max_distance."""
         best: tuple[int, str] | None = None
