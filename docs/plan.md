@@ -55,3 +55,21 @@
 - UI: single FastAPI-served page first; Merkle-tree ↔ image visualisation as option.
 - Options order: TrustMark watermark · redaction in UI · tree visualisation · WebAuthn passkey · version chain (`parent`).
 - Work split and rules: see `docs/team-rules.md`.
+
+## Phase 2 (decided Fri 20 Nov afternoon — full Q&A in `docs/decisions.md`)
+
+Order (whatever is not done at the 10:00 freeze becomes "future work" in the pitch):
+
+1. **ZK A — anonymous device attestation**: Groth16 proof that *some* credentialed device (Baby Jubjub key in a Poseidon Merkle registry whose root is published on XRPL) signed the manifest, without revealing which one. Root valid at anchor time ⇒ non-retroactive revocation.
+2. **Non-retroactive revocation** (named mode): CredentialDelete date read from the registry history; photos anchored before stay 🟢 "device revoked since …".
+3. **Public verification link** `/v/<tx>` with social preview tags.
+4. **ZK B — selective metadata disclosure**: Poseidon commitment to EXIF time + GPS in the signed manifest; proofs "taken on day D" and "within ~10 km of …" without revealing exact time or position.
+5. **Fast anchoring**: answer on submit, verdict flagged `pending` until validated.
+6. **C2PA manifest** in the published PNG pointing to the XRPL anchor (test certificate).
+7. **Passkey** (WebAuthn P-256, attested by the registry in the Credential URI), demoed on the laptop with Touch ID.
+8. **Content-addressed disclosures** (IPFS CID in the memo, served by our API).
+9. **Aggregated anchoring** (Merkle root of N manifests per tx, without the Batch amendment).
+
+Demo additions: step 7 anonymous signing, step 8 proven claims "taken on 20 Nov near …"; C2PA moment: "the C2PA manifest dies after WhatsApp, TileProof still recovers provenance".
+
+Sync points: ~19:00, ~23:00, ~03:00, 08:00 — freeze 10:00. One PR per feature, merged by its author when green, announced to the other dev.

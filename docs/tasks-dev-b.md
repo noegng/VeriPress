@@ -45,6 +45,18 @@ Les points 1 à 3 ci-dessus sont confirmés corrigés (merci !). Nouveaux points
 
 **→ Fait (Dev B)** : (4) plus de pré-remplissage du tx_hash après signature, et le champ est vidé quand on choisit une nouvelle image à vérifier ; (5) `ValueError` du pipeline → 422, tests `test_sign_with_unknown_parent_is_422` et `…_known_parent_builds_history` ; (6) `timestamp: null` → « — » (dates de l'ancre et de l'historique) ; (7) libellé du bouton Signer et liens de l'explorateur selon `/api/health` (hors ligne : hash sans lien). Vérifié dans le navigateur, signature réelle sur Testnet comprise.
 
+## Phase 2 (contrat : `interfaces.md` § Phase 2 ; décisions : `decisions.md`)
+
+Fusion **par PR** désormais (`team-rules.md` §3).
+
+1. **Registre anonyme** : `setup_testnet.py` crée une clé Baby Jubjub par appareil (`node zk/cli.mjs keygen`, dès que Dev A l'a livré), ajoute ~20 appareils fictifs, écrit `keys/registry_devices.json`, calcule la racine (`zk root`) et la publie (Memo `tileproof/registry-root/v1`). `--revoke device` publie aussi une nouvelle racine sans lui. `XrplLedger.registry_root_at(t)` et `anchor_anonymous`.
+2. **Révocation non rétroactive** : `credential_type(pubkey, at_time)` honore `at_time` (date du `CredentialCreate` / `CredentialDelete` dans l'historique du compte registre), et `credential_revoked_at`.
+3. **Lien public** `/v/<entry_id>` : page en lecture seule (image, verdict, affirmations, explorateur), balises Open Graph / Twitter avec la miniature ; route `GET /api/entry/{id}` → `pipeline.verify_stored`.
+4. **Interface ZK** : case « Signer anonymement », affichage « appareil accrédité (anonyme) » sans clé de signataire, affirmations jour et zone (`meta_claims`).
+5. **Ancrage rapide** : `anchor(..., wait=False)` (soumission sans attente), `fetch_anchor` renvoie aussi les tx non validées (`validated=False`), page « en attente » qui se rafraîchit.
+6. **Passkey** : routes `/api/sign/passkey/prepare|complete`, `navigator.credentials.create/get` dans la page (localhost, Touch ID), `--passkey` dans le script de mise en place pour mettre `passkey:sha256:<hex>` dans l'`URI` du Credential, `credential_passkey`.
+7. **CID** / 8. **ancrage groupé** : si libre.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. soir — marche :** `setup_testnet.py` (comptes + Credentials + `--revoke`/`--reissue`, testé sur Testnet), `XrplLedger` (test de fumée OK), `api.py` (toutes les routes, réponses simulées tant que `pipeline.py` lève `NotImplementedError`, en-tête `X-Tileproof-Mock`), `static/index.html` (Signer/Vérifier, heatmap, vérifié à 390 px).
