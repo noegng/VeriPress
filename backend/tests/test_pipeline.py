@@ -259,3 +259,17 @@ def test_every_verdict_explains_itself(photo, ledger, store):
     ]:
         report, _ = verify_image(rgb, ledger, store, entry_id=eid)
         assert needle in report.reason.lower()
+
+
+def test_fully_redacted_record_cannot_vouch_for_an_arbitrary_image(photo, ledger, store):
+    """Security review: redacting everything must not turn any image into 'real'."""
+    from conftest import photo_like
+
+    signed, png = sign_image(photo, "device", ledger, store)
+    h, w = photo.shape[:2]
+    rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(0, 0, w, h)], store)
+    report, _ = verify_image(photo_like(seed=21), ledger, store, entry_id=rid)
+    assert report.verdict != FinalVerdict.REAL
+    report, _ = verify_image(png_to_rgb(red_png), ledger, store, entry_id=rid)
+    assert report.verdict == FinalVerdict.UNKNOWN  # nothing left to authenticate
+    assert "redacted" in report.reason.lower()

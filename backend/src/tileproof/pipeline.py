@@ -35,6 +35,9 @@ Signer = Literal["device", "ai"]  # demo keys in keys/device.json, keys/ai.json 
 FoundBy = Literal["tx_hash", "watermark", "phash"]
 
 
+MAX_REDACTED_SHARE = 0.5  # above this, a redacted copy proves too little to be called real
+
+
 class FinalVerdict(str, Enum):
     REAL = "real"
     EDITED = "edited"
@@ -175,6 +178,9 @@ def verify_image(
         verdict = FinalVerdict.EDITED
         c = tiles.counts()
         reason = f"{c['changed']}/{len(tiles.statuses)} tiles changed since signing"
+    elif tiles.counts()["redacted"] > len(tiles.statuses) * MAX_REDACTED_SHARE:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Too much of the image is redacted to vouch for its content"
     elif manifest.op == "edit" and credential is not None:
         verdict = FinalVerdict.EDITED
         reason = f"Signed edit of {manifest.parent} by a {credential.value} credential"

@@ -77,3 +77,21 @@ def test_different_seeds_give_different_roots_for_same_image(photo):
     m1, _ = commit(photo, SEED)
     m2, _ = commit(photo, b"t" * 32)
     assert m1.exact_root != m2.exact_root
+
+
+def test_content_pasted_into_a_redacted_area_is_changed(photo):
+    m, d = commit(photo, SEED)
+    out, d2 = redact(photo, m, d, {0, 1, 21})
+    forged = out.copy()
+    forged[0:32, 0:64] = photo[100:132, 200:264]  # paste content where tiles were blacked out
+    res = verify(jpeg(forged, 85), m, d2)
+    assert res.statuses[0] == TileStatus.CHANGED and res.statuses[1] == TileStatus.CHANGED
+    assert res.statuses[21] == TileStatus.REDACTED
+    assert res.verdict == Verdict.EDITED
+
+
+def test_jpeg_of_redacted_image_keeps_tiles_redacted(photo):
+    m, d = commit(photo, SEED)
+    out, d2 = redact(photo, m, d, {0, 1, 21})
+    res = verify(jpeg(out, 60), m, d2)
+    assert [i for i, s in enumerate(res.statuses) if s == TileStatus.REDACTED] == [0, 1, 21]

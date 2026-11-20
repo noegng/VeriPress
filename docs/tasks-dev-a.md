@@ -25,5 +25,5 @@ Lire d'abord [`team-rules.md`](team-rules.md) et [`interfaces.md`](interfaces.md
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **20/11 soir — fait** : tâches 1, 2, 3, 6 (filigrane + étape 5), 7 (masquage), 9 (chaîne de versions), plus `tileproof.cli demo` (les 6 scénarios hors ligne). 50 tests au vert. 12 MP : signature ~2 s, vérification ~2 s.
-- **Reste** : tâche 4 (calibrage sur de vraies photos de téléphone passées par WhatsApp), tâche 5 (vraie image IA), option 8 (passkey), `/security-review`.
+- **Reste** : tâche 4 (calibrage sur de vraies photos de téléphone passées par WhatsApp), tâche 5 (vraie image IA), option 8 (passkey). `/security-review` fait : faille de masquage (image arbitraire → 🟢) corrigée + tests de régression.
 - **Lancer** : `cd backend && uv run python -m pytest` · `uv run python -m tileproof.cli demo photo.jpg -o out/`. Le premier usage du filigrane télécharge les modèles TrustMark (~3 min) : appeler `watermark.warm_up()` au démarrage de l'API.
