@@ -134,6 +134,12 @@
           <span>🎞️ <b>Development of this RAW</b><br><small>The original is a RAW negative signed by this same device; this JPEG is its developed reference image.</small></span>
         </label>
       </details>
+      <details class="more">
+        <summary>Sign several photos in one XRPL transaction (batch)</summary>
+        <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" id="batchFiles" multiple>
+        <div class="row"><button class="btn ghost" id="batchBtn" disabled>Sign &amp; anchor as one batch</button></div>
+        <ul class="claims" id="batchList" hidden></ul>
+      </details>
       <div class="err" id="signErr"></div>
     </div>
     <div class="card" id="signResult" hidden>
@@ -236,6 +242,19 @@ function publicLink(id) {
 function txLink(hash, url) {
   const code = `<code>${esc(short(hash))}</code>`;
   return ONCHAIN ? `<a href="${esc(safeUrl(url || EXPLORER + hash))}" target="_blank" rel="noopener">${code} ↗</a>` : code;
+}
+// C2PA (Content Credentials) is shown as information, never as proof (security-review.md):
+// anyone can forge a manifest pointing to any anchor; the verdict comes from VeriPress alone.
+function c2paRow(r) {
+  const c = r.c2pa;
+  if (c) {
+    const where = c.matches_anchor ? "points to this same XRPL anchor" : "points to another anchor";
+    const signer = c.signer_trusted ? "signer on the C2PA trust list" : "signer not on the C2PA trust list (test certificate)";
+    return `ℹ️ Content Credentials manifest present — ${where} · ${signer}`;
+  }
+  return r.entry_id && r.found_by !== "tx_hash"
+    ? "ℹ️ no C2PA manifest in this file (metadata stripped when shared) — provenance recovered from the pixels"
+    : null;
 }
 // [T0, T1]: the signed manifest names the latest validated ledger (its hash cannot be known
 // before it closed), and the anchor's ledger closed after the signature.
@@ -469,6 +488,28 @@ $("passkeyBtn").addEventListener("click", async () => {
 });
 refreshPasskey();
 
+// Batch: N photos signed one by one, ONE transaction anchoring the Merkle root of the records.
+$("batchFiles").addEventListener("change", () => {
+  const n = $("batchFiles").files.length;
+  $("batchBtn").disabled = n === 0 || n > 8;
+  $("batchBtn").textContent = n > 8 ? "At most 8 photos per batch" : n ? `Sign ${n} photo${n > 1 ? "s" : ""} · one transaction` : "Sign & anchor as one batch";
+});
+$("batchBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  for (const f of $("batchFiles").files) fd.append("images", f);
+  fd.append("signer", document.querySelector("input[name=signer]:checked").value);
+  if ($("anonInput").checked) fd.append("anonymous", "1");
+  fd.append("wait", "0");
+  const res = await post("/api/sign/batch", fd, $("batchBtn"), $("signErr"), "Signing the batch…");
+  if (!res) return;
+  const tx = txLink(res.tx_hash, res.explorer_url);
+  $("batchList").innerHTML = `<li>⛓️ <b>${Number(res.size)}</b> photo${res.size > 1 ? "s" : ""} anchored in ${tx}${res.pending ? " · ⏳ pending validation" : ""}</li>`
+    + res.entries.map((e) => e.entry_id
+      ? `<li>✅ ${esc(e.name)} · <a href="${esc(e.image_url)}" download>download</a> · ${publicLink(e.entry_id)}</li>`
+      : `<li>❌ ${esc(e.name)} · ${esc(e.error)}</li>`).join("");
+  $("batchList").hidden = false;
+});
+
 // Verify
 function applyHeatmapToggle() {
   const on = $("heatmapToggle").checked && !$("heatmap").hidden;
@@ -516,6 +557,10 @@ function showReport(r) {
     ["Signed between", timeWindow(r.time_window)],
     ["Anchored", a && esc(fmtTime(a.timestamp))],
     ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
+    // Aggregated anchoring: one transaction for N photos, a Merkle receipt per photo.
+    ["Batch", r.batch && `photo ${Number(r.batch.index) + 1} of ${Number(r.batch.size)} in one transaction · Merkle receipt ✅`],
+    ["C2PA", c2paRow(r)],
+    ["Disclosure CID", r.disclosure_cid && `<code title="${esc(r.disclosure_cid)}">${esc(short(r.disclosure_cid))}</code>`],
     ["Public link", r.verdict !== "unknown" && r.entry_id && publicLink(r.entry_id)],
     ["Signer key", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "🕶️ hidden (anonymous)" : null)],
     ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],

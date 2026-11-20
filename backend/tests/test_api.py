@@ -408,3 +408,53 @@ def test_develop_needs_op_develop_and_a_parent(client, form):
     r = client.post("/api/sign", files={"image": ("d.png", png(np.full((64, 64, 3), 90, np.uint8)), "image/png")},
                     data={"signer": "device", **form})
     assert r.status_code == 422
+
+
+def test_c2pa_manifest_is_reported_as_information(signed):
+    body, published = signed
+    rep = post_verify(published).json()
+    c = rep["c2pa"]
+    assert c is not None and c["tx_hash"] == body["tx_hash"] and c["matches_anchor"] is True
+    assert c["signer_trusted"] is False  # local test CA, not on the C2PA trust list
+    assert rep["verdict"] == "real"
+    # Re-encoded (what a messaging app does): the manifest is gone, the provenance is not.
+    rgb = np.asarray(Image.open(io.BytesIO(published)).convert("RGB"))
+    stripped = post_verify(png(rgb)).json()
+    assert stripped["c2pa"] is None and stripped["verdict"] == "real"
+
+
+def test_forged_c2pa_manifest_does_not_change_the_verdict(client):
+    from veripress import c2pa_embed
+
+    # Anyone can sign a C2PA manifest that points to any anchor (security-review.md).
+    forged = c2pa_embed.embed(png(np.full((64, 64, 3), 33, np.uint8)), "CD" * 32, "ee" * 32, "capture",
+                              "https://testnet.xrpl.org/transactions/" + "CD" * 32)
+    rep = post_verify(forged).json()
+    assert rep["verdict"] == "unknown"
+    assert rep["c2pa"]["tx_hash"] == "CD" * 32 and rep["c2pa"]["matches_anchor"] is False
+
+
+def test_batch_of_three_photos_one_transaction(client):
+    from conftest import photo_like
+
+    files = [("images", (f"p{i}.png", png(photo_like(seed=20 + i)), "image/png")) for i in range(3)]
+    files.append(("images", ("broken.jpg", b"not an image", "image/jpeg")))
+    r = client.post("/api/sign/batch", files=files, data={"signer": "device", "wait": "0"})
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res["size"] == 3 and res["pending"] is False  # offline ledger validates at once
+    assert [("entry_id" in e) for e in res["entries"]] == [True, True, True, False]
+    assert res["entries"][3]["name"] == "broken.jpg" and res["entries"][3]["error"]
+    for i, e in enumerate(res["entries"][:3]):
+        rep = post_verify(client.get(e["image_url"]).content).json()
+        assert rep["verdict"] == "real", rep["reason"]
+        assert rep["batch"] == {"tx_hash": res["tx_hash"], "index": i, "size": 3}
+        assert rep["anchor"]["tx_hash"] == res["tx_hash"]
+
+
+def test_batch_limits(client):
+    one = ("images", ("a.png", png(np.full((64, 64, 3), 50, np.uint8)), "image/png"))
+    assert client.post("/api/sign/batch", files=[one] * 9, data={"signer": "device"}).status_code == 422
+    # nothing signable (the AI key is never in the anonymous registry) -> 422, no transaction
+    r = client.post("/api/sign/batch", files=[one], data={"signer": "ai", "anonymous": "1"})
+    assert r.status_code == 422
