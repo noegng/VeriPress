@@ -13,15 +13,22 @@ Final verdict rules (implemented test-first by Dev A):
 
 from __future__ import annotations
 
+import base64
+import io
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
 import numpy as np
+from PIL import Image
 
-from .commitment import Manifest, VerifyResult
+from .tiling import Grid
+from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, verify
+from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
-from .store import Store
+from .signing import load_key, verify_signature
+from .store import Entry, Store
 
 Signer = Literal["device", "ai"]  # demo keys in keys/device.json, keys/ai.json (written by Dev B's setup script)
 FoundBy = Literal["tx_hash", "watermark", "phash"]
@@ -41,7 +48,18 @@ class SignResult:
     manifest: Manifest
 
     def to_json(self) -> dict:
-        raise NotImplementedError  # shape: docs/interfaces.md "POST /api/sign"
+        """Shape: docs/interfaces.md "POST /api/sign"."""
+        g = self.manifest.grid
+        return {
+            "entry_id": self.entry_id,
+            "tx_hash": self.anchor.tx_hash,
+            "explorer_url": self.anchor.explorer_url,
+            "digest": self.manifest.digest(),
+            "signer": self.manifest.signer,
+            "grid": {"cols": g.cols, "rows": g.rows, "tile": g.tile},
+            "roots": {"exact": self.manifest.exact_root, "robust": self.manifest.robust_root},
+            "image_url": f"/api/files/{self.entry_id}.png",
+        }
 
 
 @dataclass
@@ -54,14 +72,50 @@ class Report:
     credential: CredentialType | None
     signature_ok: bool
     tiles: VerifyResult | None
+    grid: Grid | None = None
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
-        raise NotImplementedError  # shape: docs/interfaces.md "POST /api/verify"
+        """Shape: docs/interfaces.md "POST /api/verify"."""
+        a, t, g = self.anchor, self.tiles, self.grid
+        return {
+            "verdict": self.verdict.value,
+            "reason": self.reason,
+            "found_by": self.found_by,
+            "entry_id": self.entry_id,
+            "anchor": None if a is None else {
+                "tx_hash": a.tx_hash, "timestamp": a.timestamp,
+                "explorer_url": a.explorer_url, "signer": a.pubkey,
+            },
+            "credential": self.credential.value if self.credential else None,
+            "signature_ok": self.signature_ok,
+            "tiles": None if t is None or g is None else {
+                "verdict": t.verdict.value,
+                "grid": {"cols": g.cols, "rows": g.rows, "tile": g.tile},
+                "counts": t.counts(),
+                "statuses": [s.value for s in t.statuses],
+                "distances": [round(d, 2) for d in t.distances],
+            },
+            "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
+        }
+
+
+def _png(img: np.ndarray | Image.Image) -> bytes:
+    buf = io.BytesIO()
+    (img if isinstance(img, Image.Image) else Image.fromarray(img)).save(buf, "PNG")
+    return buf.getvalue()
 
 
 def sign_image(rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish."""
-    raise NotImplementedError
+    key = load_key(signer)
+    manifest, disclosure = commit(rgb, os.urandom(32))
+    manifest.signer = key.public_key
+    manifest.op = "ai_generate" if signer == "ai" else "capture"
+    digest = manifest.digest()
+    anchor = ledger.anchor(digest, key.sign(digest), key.public_key)
+    png = _png(rgb)
+    store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, disclosure, phash(rgb)), png)
+    return SignResult(anchor.tx_hash, anchor, manifest), png
 
 
 def verify_image(
@@ -69,7 +123,45 @@ def verify_image(
 ) -> tuple[Report, bytes | None]:
     """Find the entry (entry_id > watermark > phash), check anchor/signature/credential/tiles.
     Returns the report and the heatmap PNG (None when no entry was found)."""
-    raise NotImplementedError
+    found_by: FoundBy | None = None
+    if entry_id:
+        entry, found_by = store.get(entry_id), "tx_hash"
+    else:
+        entry = store.nearest(phash(rgb))
+        found_by = "phash" if entry else None
+    if entry is None:
+        reason = f"No provenance record for id {entry_id}" if entry_id else "No provenance found for this image"
+        return Report(FinalVerdict.UNKNOWN, reason, None, None, None, None, False, None), None
+    manifest = entry.manifest
+    anchor = ledger.fetch_anchor(entry.tx_hash)
+    if anchor is None:
+        reason = f"Anchor transaction {entry.tx_hash} not found on the ledger"
+        return Report(FinalVerdict.UNKNOWN, reason, found_by, entry.id, None, None, False, None), None
+    sig_ok = verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
+    credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
+    tiles = verify(rgb, manifest, entry.disclosure)
+    reason = ""
+    if anchor.digest != manifest.digest() or anchor.pubkey != manifest.signer:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Stored manifest does not match the anchored digest"
+    elif not sig_ok:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Anchored signature does not verify against the signer key"
+    elif tiles.verdict == Verdict.INVALID_DISCLOSURE:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Tile disclosure does not match the signed Merkle roots"
+    elif tiles.verdict == Verdict.EDITED:
+        verdict = FinalVerdict.EDITED
+    elif credential == CredentialType.AI_GENERATOR:
+        verdict = FinalVerdict.AI
+    elif credential == CredentialType.CAPTURE_DEVICE:
+        verdict = FinalVerdict.REAL
+    else:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Signer has no valid credential (never issued or revoked)"
+    report = Report(verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid)
+    hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
+    return report, hm
 
 
 def redact_image(

@@ -41,6 +41,8 @@ class Manifest:
     feature: dict = field(
         default_factory=lambda: {"pool": F.POOL, "n": F.N_COEFFS, "step": F.STEP}
     )
+    signer: str = ""  # XRPL ed25519 public key ("ED…") of the signing device / generator
+    op: str = "capture"  # capture | ai_generate | edit
     v: int = VERSION
 
     @property
