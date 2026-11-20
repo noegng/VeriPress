@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from tileproof.tiling import load_rgb
+from tileproof.tiling import load_rgb, load_upload
 
 GRADIENT16 = np.linspace(0, 65535, 64 * 64).reshape(64, 64).astype(np.uint16)
 
@@ -50,3 +50,49 @@ def test_48_bit_rgb_tiff_is_scaled(tmp_path):
     _write_rgb48_tiff(tmp_path / "rgb16.tiff", px)
     rgb = load_rgb(tmp_path / "rgb16.tiff")
     assert np.abs(rgb.astype(int) - np.rint(px / 257)).max() <= 1
+
+
+RAW_EXTS = {".cr2", ".cr3", ".nef", ".arw", ".raf", ".rw2", ".orf", ".dng"}
+
+
+def _raw_samples():
+    """Real camera RAW files are 3-10 MB each, so they are not committed: point
+    TILEPROOF_RAW_SAMPLES at a folder of them (CC0 samples: https://raw.pixls.us)."""
+    import os
+    from pathlib import Path
+
+    d = os.environ.get("TILEPROOF_RAW_SAMPLES")
+    return sorted(p for p in Path(d).iterdir() if p.suffix.lower() in RAW_EXTS) if d else []
+
+
+@pytest.mark.skipif(not _raw_samples(), reason="set TILEPROOF_RAW_SAMPLES to a folder of RAW files")
+@pytest.mark.parametrize("path", _raw_samples(), ids=lambda p: p.name)
+def test_camera_raw_is_developed_deterministically(path):
+    rgb = load_rgb(path)
+    assert rgb.dtype == np.uint8 and rgb.ndim == 3 and rgb.shape[2] == 3
+    assert min(rgb.shape[:2]) >= 400
+    assert 15 < rgb.mean() < 240  # developed, not a black or blown-out frame
+    assert np.array_equal(rgb, load_rgb(path))  # same pixels every time: the exact tree relies on it
+
+
+def test_upload_of_a_regular_image_is_loaded(tmp_path, photo):
+    import io
+
+    buf = io.BytesIO()
+    Image.fromarray(photo).save(buf, "PNG")
+    assert np.array_equal(load_upload(buf.getvalue(), "photo.png"), photo)
+    assert np.array_equal(load_upload(buf.getvalue(), None), photo)
+
+
+def test_garbage_upload_is_rejected():
+    with pytest.raises(ValueError):
+        load_upload(b"not an image at all", "x.jpg")
+
+
+@pytest.mark.skipif(not _raw_samples(), reason="set TILEPROOF_RAW_SAMPLES to a folder of RAW files")
+@pytest.mark.parametrize("path", _raw_samples(), ids=lambda p: p.name)
+def test_raw_upload_matches_raw_file_with_or_without_name(path):
+    data = path.read_bytes()
+    expected = load_rgb(path)
+    assert np.array_equal(load_upload(data, path.name), expected)
+    assert np.array_equal(load_upload(data, None), expected)  # browsers may send no usable name
