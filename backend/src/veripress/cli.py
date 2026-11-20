@@ -117,6 +117,26 @@ def _demo_ledger(out: Path):
     return ledger, store
 
 
+def cmd_export_disclosure(a: argparse.Namespace) -> int:
+    from .contentaddr import canonical_json, cid_v1_raw
+    from .store import Store
+
+    entry = Store(a.store).get(a.entry_id)
+    if entry is None:
+        print(f"unknown entry {a.entry_id}", file=sys.stderr)
+        return 1
+    data = canonical_json(entry.disclosure.to_dict())
+    cid = cid_v1_raw(data)
+    if entry.manifest.disclosure_cid and cid != entry.manifest.disclosure_cid:
+        print(f"warning: stored disclosure {cid} differs from the signed one {entry.manifest.disclosure_cid}"
+              " (redacted variant?)", file=sys.stderr)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{cid}.json").write_bytes(data)
+    print(f"{out / (cid + '.json')}  ({len(data)} bytes)")
+    return 0
+
+
 def cmd_demo_raw(a: argparse.Namespace) -> int:
     """Digital negative -> reference JPEG (Apple Reference Image phases 1 and 2, on XRPL)."""
     import io
@@ -347,6 +367,12 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("--ai", help="AI-generated image for scenario 6 (default: mirrored photo)")
     dm.add_argument("-o", "--out", required=True)
     dm.set_defaults(fn=cmd_demo)
+
+    ex = sub.add_parser("export-disclosure", help="write an entry's disclosure as <CID>.json, for mirroring")
+    ex.add_argument("entry_id")
+    ex.add_argument("--store", default="store")
+    ex.add_argument("-o", "--out", required=True)
+    ex.set_defaults(fn=cmd_export_disclosure)
 
     dr = sub.add_parser("demo-raw", help="RAW negative -> signed reference JPEG (Apple Reference Image, on XRPL)")
     dr.add_argument("image", help="camera RAW / DNG (or any image)")
