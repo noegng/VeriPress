@@ -116,6 +116,8 @@ def sign_image(
 ) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
     `parent`: tx hash of the signed version this image was edited from (version chain)."""
+    if parent is not None and (store.get(parent) is None or ledger.fetch_anchor(parent) is None):
+        raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
     key = load_key(signer)
     wm_id, original = b"", None
     if watermark.enabled():
@@ -185,6 +187,9 @@ def verify_image(
     elif manifest.op == "edit" and credential is not None:
         verdict = FinalVerdict.EDITED
         reason = f"Signed edit of {manifest.parent} by a {credential.value} credential"
+        history = _history(entry.tx_hash, ledger, store)
+        if not all(h["verified"] for h in history):
+            reason += "; the original version could not be verified"
     elif credential in (CredentialType.AI_GENERATOR, CredentialType.CAPTURE_DEVICE):
         verdict = FinalVerdict.AI if credential == CredentialType.AI_GENERATOR else FinalVerdict.REAL
         c, n = tiles.counts(), len(tiles.statuses)
@@ -196,7 +201,7 @@ def verify_image(
             how = "match after recompression"
         reason = f"Signed by a {credential.value} credential; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
-            reason += f", {c['redacted']} redacted by the owner"
+            reason += f", {c['redacted']} redacted"
     else:
         verdict = FinalVerdict.UNKNOWN
         reason = "Signer has no valid credential (never issued or revoked)"
