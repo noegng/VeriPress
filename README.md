@@ -4,8 +4,6 @@
 
 Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track 1: Advanced cryptography for blockchain**.
 
-_Formerly "TileProof" (renamed on Fri 20 Nov); the GitHub repository keeps its old name for now._
-
 ---
 
 ## The problem
