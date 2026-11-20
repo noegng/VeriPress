@@ -346,11 +346,12 @@ def test_passkey_signing_routes_until_and_once_the_pipeline_supports_it(client, 
     # plumbing with a stand-in pipeline: what the page sends reaches it, errors map to HTTP codes
     seen = {}
 
-    def prepare(rgb, store, parent=None, exif=None):
-        seen["prepare"] = (rgb.shape, parent)
+    def prepare(rgb, store, parent=None, exif=None, ledger=None):
+        seen["prepare"] = (rgb.shape, parent, ledger is api.app.state.ledger)  # ledger: T0 + parent check
         return {"prep_id": "P1", "challenge": "ab" * 32}
 
-    def complete(prep_id, assertion, ledger, store):
+    def complete(prep_id, assertion, ledger, store, wait=True):
+        seen["wait"] = wait
         if prep_id != "P1":
             raise KeyError(prep_id)
         if assertion.get("signature") != "good":
@@ -362,8 +363,48 @@ def test_passkey_signing_routes_until_and_once_the_pipeline_supports_it(client, 
     monkeypatch.setattr(api.pipeline, "prepare_passkey_sign", prepare, raising=False)
     monkeypatch.setattr(api.pipeline, "complete_passkey_sign", complete, raising=False)
     assert client.post("/api/sign/passkey/prepare", files=img).json() == {"prep_id": "P1", "challenge": "ab" * 32}
-    assert seen["prepare"] == ((64, 64, 3), None)
+    assert seen["prepare"] == ((64, 64, 3), None, True)
     assert client.post("/api/sign/passkey/complete", json={"prep_id": "nope", "assertion": {}}).status_code == 404
     assert client.post("/api/sign/passkey/complete", json={"prep_id": "P1", "assertion": {"signature": "bad"}}).status_code == 422
-    ok = client.post("/api/sign/passkey/complete", json={"prep_id": "P1", "assertion": {"signature": "good"}})
+    ok = client.post("/api/sign/passkey/complete", json={"prep_id": "P1", "assertion": {"signature": "good"}, "wait": 0})
     assert ok.status_code == 200 and ok.json()["passkey"] is True
+    assert seen["wait"] is True  # offline FakeLedger: always validated, even when the page asks wait=0
+    assert ok.json()["pending"] is False
+
+
+def test_wait_flag_parsing(client):
+    import veripress.api as api
+
+    assert api.wait_for_validation(None) and api.wait_for_validation("1")
+    # Not monkeypatch: pytest 9 reads the old value statically, misses Starlette's State
+    # storage, and would *delete* app.state.ledger on undo.
+    saved = api.app.state.ledger
+    api.app.state.ledger = object()  # any on-chain ledger
+    try:
+        assert not api.wait_for_validation("0") and not api.wait_for_validation(0) and not api.wait_for_validation(False)
+        assert api.wait_for_validation(None) and api.wait_for_validation(True)
+    finally:
+        api.app.state.ledger = saved
+
+
+def test_develop_from_a_signed_raw_is_real_with_history(client, signed):
+    from conftest import photo_like
+
+    body, _ = signed  # stands for the signed RAW negative (same device key)
+    r = client.post(
+        "/api/sign",
+        files={"image": ("d.png", png(photo_like(seed=9)), "image/png")},
+        data={"signer": "device", "parent": body["tx_hash"], "op": "develop"},
+    )
+    assert r.status_code == 200, r.text
+    rep = post_verify(client.get(r.json()["image_url"]).content).json()
+    assert rep["verdict"] == "real"
+    assert [h["op"] for h in rep["history"]] == ["develop", "capture"]
+
+
+@pytest.mark.parametrize("form", [{"op": "edit"}, {"op": "develop"}])
+def test_develop_needs_op_develop_and_a_parent(client, form):
+    # op other than develop -> 422 here; develop without parent -> 422 from the pipeline
+    r = client.post("/api/sign", files={"image": ("d.png", png(np.full((64, 64, 3), 90, np.uint8)), "image/png")},
+                    data={"signer": "device", **form})
+    assert r.status_code == 422
