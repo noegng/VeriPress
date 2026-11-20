@@ -355,8 +355,9 @@ def test_passkey_signing_routes_until_and_once_the_pipeline_supports_it(client, 
             raise KeyError(prep_id)
         if assertion.get("signature") != "good":
             raise ValueError("assertion does not verify")
-        return api.pipeline.SignResult(signed[0]["entry_id"], ledger.fetch_anchor(signed[0]["tx_hash"]),
-                                       api.app.state.store.get(signed[0]["entry_id"]).manifest), b""
+        manifest = api.app.state.store.get(signed[0]["entry_id"]).manifest
+        manifest.passkey = "04" + "11" * 64  # stand-in result of a passkey signature
+        return api.pipeline.SignResult(signed[0]["entry_id"], ledger.fetch_anchor(signed[0]["tx_hash"]), manifest), b""
 
     monkeypatch.setattr(api.pipeline, "prepare_passkey_sign", prepare, raising=False)
     monkeypatch.setattr(api.pipeline, "complete_passkey_sign", complete, raising=False)
