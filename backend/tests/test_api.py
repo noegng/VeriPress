@@ -195,3 +195,82 @@ def test_anonymous_sign_and_verify_offline(client):
     assert rep["verdict"] == "real" and rep["anonymous"] is True
     assert rep["zk"]["proof_ok"] and rep["zk"]["root_valid_at_anchor"]
     assert rep["anchor"]["signer"] == ""
+
+
+def _jpeg_with_capture_exif(rgb: np.ndarray) -> bytes:
+    """JPEG carrying DateTimeOriginal + offset + GPS (Bari), like a phone photo."""
+    ex = Image.Exif()
+    ifd = ex.get_ifd(0x8769)
+    ifd[0x9003], ifd[0x9011] = "2026:11:20 13:36:58", "+01:00"
+    ex.get_ifd(0x8825).update({1: "N", 2: (41.0, 6.0, 30.48), 3: "E", 4: (16.0, 52.0, 12.0)})
+    buf = io.BytesIO()
+    Image.fromarray(rgb).save(buf, "JPEG", quality=95, exif=ex.tobytes())
+    return buf.getvalue()
+
+
+@pytest.mark.skipif(not _zk_ready(), reason="zk deps missing: cd zk && npm ci")
+def test_exif_of_the_upload_gives_proven_day_and_area_claims(client):
+    """ZK B through the API: the uploaded file's EXIF reaches sign_image, the published PNG
+    has no EXIF, and verification shows day + area claims proven in zero knowledge."""
+    from conftest import photo_like
+
+    r = client.post(
+        "/api/sign",
+        files={"image": ("phone.jpg", _jpeg_with_capture_exif(photo_like(seed=12)), "image/jpeg")},
+        data={"signer": "device"},
+    )
+    assert r.status_code == 200, r.text
+    published = client.get(r.json()["image_url"]).content
+    assert not Image.open(io.BytesIO(published)).getexif()  # GPS never leaves in the image
+    claims = post_verify(published).json()["meta_claims"]
+    assert sorted(c["kind"] for c in claims) == ["area", "day"]
+    assert all(c["proof_ok"] for c in claims)
+    assert "20 Nov 2026" in next(c["label"] for c in claims if c["kind"] == "day")
+
+
+def test_public_link_page_and_json(client, signed):
+    """/v/<id>: server-rendered page whose social preview tags already hold the verdict and an
+    absolute thumbnail URL; /api/entry/<id>: the verification JSON of the stored image."""
+    import html as htmllib
+    import re
+
+    body, _ = signed
+    tx = body["tx_hash"]
+    j = client.get(f"/api/entry/{tx.lower()}").json()
+    assert j["verdict"] == "real" and j["entry_id"] == tx
+
+    r = client.get(f"/v/{tx.lower()}")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    page = r.text
+    meta = dict(re.findall(r'<meta property="(og:[a-z]+)" content="([^"]*)"', page))
+    assert "Real" in htmllib.unescape(meta["og:title"])
+    assert meta["og:image"] == f"http://testserver/api/files/{tx}.png"
+    assert meta["og:url"] == f"http://testserver/v/{tx}"
+    assert "__" not in "".join(meta.values())  # every template marker was filled
+    embedded = re.search(r'<script id="report" type="application/json">(.*?)</script>', page, re.S).group(1)
+    assert json.loads(embedded)["verdict"] == "real"
+
+
+def test_public_link_unknown_or_bad_ids(client):
+    assert client.get(f"/v/{'AB' * 32}").status_code == 404
+    assert client.get(f"/api/entry/{'AB' * 32}").status_code == 404
+    assert client.get("/v/not-hex").status_code == 404
+    assert client.get("/api/entry/not-hex").status_code == 422
+
+
+def test_public_page_escapes_a_hostile_report(client, monkeypatch):
+    """A reason containing markup must neither close the embedded JSON <script> nor break out
+    of the meta attributes."""
+    import veripress.api as api
+
+    evil = '"><script>alert(1)</script>'
+
+    class Report:
+        def to_json(self, heatmap=None):
+            return {"verdict": "edited", "reason": evil, "anchor": None, "meta_claims": []}
+
+    monkeypatch.setattr(api.pipeline, "verify_stored", lambda *a: (Report(), None))
+    page = client.get(f"/v/{'CD' * 32}").text
+    assert "<script>alert(1)</script>" not in page
+    assert "&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in page  # meta description, escaped
+    assert "\\u003cscript>alert(1)\\u003c/script>" in page  # embedded JSON, cannot close the tag
