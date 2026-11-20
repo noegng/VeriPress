@@ -35,3 +35,27 @@ Périmètre : verdict final, signature nominative / anonyme (ZK) / passkey (WebA
 - **Attestation de la passkey** relue dans l'état *actuel* du Credential : réattester une autre passkey invalide les anciennes photos signées par passkey (`tasks-dev-b.md`).
 - **Origine physique** : la signature se fait encore côté serveur (clé logicielle) ou par passkey sur le portable ; un capteur qui signe le RAW, comme chez Apple, reste du travail futur. Le trou analogique (photographier un écran) est inhérent à toute approche par signature.
 - **Post-quantique (mis à jour 20/11 ~18 h 45)** : la signature du manifeste est désormais **hybride Ed25519 + ML-DSA-87** (FIPS 204), clé attestée par le registre et signature obligatoire dès qu'elle est déclarée (`test_post_quantum.py` : suppression, falsification, substitution de clé, attestation retirée). Restent non post-quantiques : les preuves Groth16 sur BN254 (leur **validité** ; l'anonymat, en zero-knowledge parfait, tient), la passkey P-256 (les navigateurs n'ont pas encore de passkeys post-quantiques), la signature C2PA (ES256) et les signatures de comptes XRPL. Une fois le « Q-day » arrivé, la chronologie XRPL empêche toujours d'antidater une fausse signature.
+
+## Partie XRPL (Dev B, ven. 20/11 ~21 h)
+
+Périmètre : `XrplLedger` (ancrages, lecture des Memos, Credentials, registre anonyme, T0, lots, attestations dans l'URI), `scripts/setup_testnet.py`, et les routes de l'API : enregistrement de la passkey, `/v/<id>`, `/api/anchor`, `/api/sign/batch`, `c2pa` dans `/api/verify`. Même modèle de menace que ci-dessus : n'importe qui peut envoyer des transactions et des Memos au compte registre. **Aucune vulnérabilité exploitable trouvée.**
+
+| Propriété | Mécanisme | Tests |
+|---|---|---|
+| Racine du registre non falsifiable | Seuls les `AccountSet` **envoyés par le compte registre** (`Account == registry`) comptent. Un Memo `registry-root` envoyé par un tiers est ignoré | `test_ledger_registry` |
+| Credentials non falsifiables | `CredentialCreate` doit venir du registre, `CredentialAccept` du sujet (après un Create) ; un Create d'un autre compte est ignoré ; seules les transactions validées et `tesSUCCESS` comptent | `test_ledger_revocation` |
+| Clés attestées (passkey, ML-DSA-87) | Lues dans le `CredentialCreate` **du registre** en vigueur (historique) ; un Create d'un autre compte est ignoré ; une révocation n'efface pas l'attestation (c'est `credential_type(pk, t)` qui juge la validité) | `test_ledger_pq` |
+| T0 non falsifiable | `ledger_close_time` redemande le ledger validé à cet index et compare son hash. Faux hash, ledger futur ou non validé : `None`. Seuls les ledgers validés sont mis en cache | `test_ledger_time_window`, Testnet |
+| Racine de lot sans valeur seule | `n` non entier ou ≤ 0 : ignoré. Une racine ancrée par un tiers n'atteste rien : chaque reçu doit contenir une signature, une preuve ZK ou une passkey valides (`batching.py`) | `test_ledger_batch`, `test_batch` |
+| Ancrage non validé | Horodaté à la soumission ou au présent, jamais à une date fournie par l'attaquant : la révocation est donc évaluée au présent ; verdict « pending » | `test_fast_anchoring_flag_and_anchor_status` |
+| Soumissions sûres | Aucune nouvelle tentative de soumission (risque de double ancrage) ; numéro de séquence sous verrou | Testnet (deux ancrages à la suite) |
+| Page publique | Rapport JSON dans `<script>` avec `<` échappé ; balises OG passées par `html.escape` ; `innerHTML` seulement via `esc()` / `Number()` ; `entry_id` validé par regex ; C2PA affiché comme information, sans effet sur le verdict | `test_public_page_escapes_a_hostile_report`, `test_forged_c2pa_manifest_does_not_change_the_verdict` |
+| Enregistrement de la passkey | Réservé à localhost (pair TCP ; uvicorn n'accepte `X-Forwarded-For` que d'un pair 127.0.0.1). La route n'écrit qu'une **candidate** : seul l'opérateur l'atteste (`--passkey`) | `test_passkey_registration_is_localhost_only` |
+
+### Points connus, non corrigés (assumés et dits au jury)
+
+- **L'« appareil » de la démo, c'est le serveur.** `/api/sign` et `/api/sign/batch` signent avec la clé logicielle de l'appareil pour quiconque joint le serveur (lancé sur `0.0.0.0` pour le téléphone). Sur le Wi-Fi de la salle, n'importe qui pourrait donc produire une photo 🟢 « appareil accrédité ». En production, la clé vit dans le capteur, ou c'est la passkey de l'appareil. Pendant la démo, ne pas afficher l'adresse IP du serveur, ou le lancer sur `127.0.0.1` si le téléphone n'est pas nécessaire.
+- **Tunnel public** (par exemple pour les aperçus sociaux) : les requêtes arriveraient alors de 127.0.0.1, et l'enregistrement de la passkey ne serait plus réservé à la machine. Ne pas ouvrir de tunnel pendant l'enregistrement ou l'attestation d'une passkey.
+- **Lecture par un nœud public Testnet de confiance**, sans preuve d'état : un nœud malveillant pourrait mentir. En production : son propre nœud, ou plusieurs nœuds recoupés.
+- **Attestation lue dans le dernier `CredentialCreate`** quand `at_time` n'est pas fourni : réattester une autre passkey ou une autre clé ML-DSA invalide les anciennes photos. Le pipeline peut passer `at_time=anchor.timestamp` pour lever cette limite (proposé à Dev A, #41). Ce point remplace « relue dans l'état *actuel* » ci-dessus : depuis #41, une révocation ne l'efface plus.
+- **Clés de démo en clair dans `keys/`** (`chmod 600`, jamais commitées). En production : HSM ou enclave sécurisée.
