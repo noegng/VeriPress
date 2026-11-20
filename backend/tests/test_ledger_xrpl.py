@@ -110,3 +110,27 @@ def test_time_window_t0_before_t1():
     assert fresh.ledger_close_time(index, "00" * 32) is None
     assert close <= anchor.timestamp
     print(f"\nT0 ledger {index} closed {close}, anchored {anchor.timestamp} ({anchor.timestamp - close}s window)")
+
+
+def test_batch_of_three_records_in_one_transaction(tmp_path):
+    """BatchingLedger over the real ledger: three records (named, named, anonymous) queued,
+    one Payment with memo {"b", "n": 3}; every receipt proves its leaf against the root read
+    back from XRPL."""
+    from veripress.batching import BatchingLedger, resolve_receipt
+    from veripress.store import Store
+
+    base = XrplLedger(keys_dir=KEYS)
+    store = Store(tmp_path / "store")
+    device = json.loads((KEYS / "device.json").read_text())["public_key"]
+    batching = BatchingLedger(base, store)
+    batching.anchor("a1" * 32, "ff" * 64, device)
+    batching.anchor("b2" * 32, "ff" * 64, device)
+    batching.anchor_anonymous("c3" * 32, "1234", "22" * 32)
+    tx = batching.flush(wait=True)
+    batch = base.fetch_anchor(tx)
+    assert batch is not None and batch.batch_size == 3 and batch.validated
+    for i, digest in enumerate(("A1" * 32, "B2" * 32, "C3" * 32)):
+        anchor, info, err = resolve_receipt(store.get_receipt(digest), base)
+        assert err == "" and info == {"tx_hash": tx, "index": i, "size": 3}
+        assert anchor.digest.upper() == digest and anchor.timestamp == batch.timestamp
+    print(f"\nbatch of 3 anchored in {tx}")
