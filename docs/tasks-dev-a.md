@@ -16,7 +16,7 @@ Lire d'abord [`team-rules.md`](team-rules.md) et [`interfaces.md`](interfaces.md
 
 ## Options (dans l'ordre)
 
-6. **Filigrane TrustMark** (`watermark.py`) : `embed(rgb, entry_id) -> rgb`, `extract(rgb) -> entry_id | None`. L'identifiant tient en ~64 bits : utiliser les 16 premiers hex du tx_hash et faire la recherche par préfixe dans le store. Sur `main`, faire `uv add trustmark` dans un commit dédié. Brancher le module dans `sign_image` (image publiée tatouée, **commit fait sur l'image tatouée**) et dans `verify_image`. Tester la survie à WhatsApp.
+6. **Filigrane TrustMark** (`watermark.py`) : `embed(rgb, wm_id) -> rgb`, `extract(rgb) -> wm_id | None`. *(Fait autrement : `wm_id` aléatoire de 64 bits engagé dans le manifeste, car l'image est tatouée avant l'ancrage.)* Sur `main`, faire `uv add trustmark` dans un commit dédié. Brancher le module dans `sign_image` (image publiée tatouée, **commit fait sur l'image tatouée**) et dans `verify_image`. Tester la survie à WhatsApp.
    → **Étape 5** : filigrane recopié sur une autre image → `robust` ne correspond pas → `edited` ou `unknown` avec la raison « watermark does not match content ».
 7. `redact_image` (le cœur `redact` existe déjà) pour l'étape 4 côté page.
 8. ~~Vraie passkey WebAuthn~~ → décidé le 20/11 : laissée à Dev B (P-256 ≠ clés XRPL, il faut lier la passkey au compte XRPL de l'appareil).

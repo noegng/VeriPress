@@ -1,14 +1,22 @@
 """Sign / verify pipeline — OWNER: Dev A.  The signatures and JSON shapes below are the
 contract with Dev B's API (see docs/interfaces.md): change only via a dedicated commit on main.
 
-Final verdict rules (implemented test-first by Dev A):
-  no entry found (no tx_hash, no watermark, no phash match)        -> UNKNOWN
-  anchor missing on ledger / digest mismatch / bad signature       -> UNKNOWN (reason says why)
-  disclosure does not match the signed roots                       -> UNKNOWN
-  tiles: EDITED                                                    -> EDITED (heatmap)
-  tiles: INTACT|RECOMPRESSED + credential CAPTURE_DEVICE           -> REAL
-  tiles: INTACT|RECOMPRESSED + credential AI_GENERATOR             -> AI
-  tiles: INTACT|RECOMPRESSED + no valid credential (or revoked)    -> UNKNOWN
+Final verdict rules, first match wins (implemented test-first, tests/test_pipeline.py):
+  no entry found (no id, no watermark, no phash match)              -> UNKNOWN
+  anchor missing on the ledger                                      -> UNKNOWN
+  stored manifest != anchored digest/signer                         -> UNKNOWN
+  bad signature                                                     -> UNKNOWN
+  disclosure does not match the signed roots                        -> UNKNOWN
+  found by watermark and > half of the tiles changed                -> UNKNOWN (copied watermark)
+  tiles: EDITED (a redacted tile that is not black counts as changed) -> EDITED (heatmap)
+  > MAX_REDACTED_SHARE of the tiles redacted                        -> UNKNOWN (proves too little)
+  op == "edit" + any valid credential                               -> EDITED (signed edit; the
+                                                                       reason flags an unverifiable chain)
+  credential AI_GENERATOR                                           -> AI
+  credential CAPTURE_DEVICE                                         -> REAL
+  no valid credential (never issued or revoked, even after signing) -> UNKNOWN
+A tile matches if it is close to the published (watermarked) image OR to the unwatermarked
+original: both are committed at signing. sign_image refuses a `parent` that is not anchored.
 """
 
 from __future__ import annotations

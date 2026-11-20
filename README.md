@@ -18,11 +18,11 @@ _Working name — rename freely._
 ## Our solution
 
 1. **Sign at capture** — the phone signs the photo with a hardware-backed key (WebAuthn / passkey). An **XRPL Credential** certifies that the device (or a declared AI generator) is trusted; it can be revoked.
-2. **Split into tiles** — the image is cut into 32×32 tiles, hashed into two Merkle trees:
+2. **Split into tiles** — the image is cut into tiles (~1/40 of the long side, at least 32 px), hashed into two Merkle trees:
    - an **exact** tree (raw pixel bytes) → proves the image is bit-for-bit untouched;
    - a **robust** tree (quantized low-frequency features per tile) → survives JPEG recompression, breaks on content edits.
 3. **Anchor on XRPL** — Merkle roots + signature + commitment to metadata are recorded in an XRPL transaction: public timestamp, decentralized manifest registry.
-4. **Watermark** — an invisible watermark in the pixels carries the XRPL anchor ID, so provenance survives metadata stripping. The robust tree binds the watermark to the content, so copying it onto another image is detected.
+4. **Watermark** — an invisible watermark (Adobe TrustMark) in the pixels carries a 64-bit lookup id committed in the signed manifest, so provenance survives metadata stripping. The robust tree binds the watermark to the content, so copying it onto another image is detected. It is only a pointer: the verdict comes from the signature and the Merkle roots, and the unwatermarked original verifies too.
 
 ## Verdicts
 
