@@ -37,7 +37,7 @@ Le dossier `keys/` n'est **jamais commité**.
 
 ### `GET /api/files/{entry_id}.png` → image publiée (à télécharger puis partager)
 
-### `POST /api/sign`  (multipart : `image`, `signer` = `device` | `ai`)
+### `POST /api/sign`  (multipart : `image`, `signer` = `device` | `ai`, optionnel `parent` = tx_hash de la version d'origine → `op = "edit"`)
 
 ```json
 {
@@ -70,11 +70,16 @@ Le dossier `keys/` n'est **jamais commité**.
     "statuses": ["exact", "robust", "changed", "redacted", "…"],
     "distances": [0.0, 1.2, 37.5, "…"]
   },
+  "history": [
+    {"tx_hash": "C3D4…", "op": "edit", "timestamp": 1795000100, "verified": true},
+    {"tx_hash": "A1B2…", "op": "capture", "timestamp": 1795000000, "verified": true}
+  ],
   "heatmap_png_b64": "iVBORw0…"
 }
 ```
 
-Quand rien n'est trouvé : `verdict = "unknown"`, `found_by = null`, et `anchor`, `tiles`, `heatmap_png_b64` à `null`.
+Quand rien n'est trouvé : `verdict = "unknown"`, `found_by = null`, `anchor`, `tiles`, `heatmap_png_b64` à `null` et `history = []`.
+`history` : chaîne des versions, de la plus récente à l'origine (option « chaîne de versions »).
 `statuses` est en ordre ligne par ligne (index = `row * cols + col`), utilisable tel quel pour la visualisation arbre ↔ image.
 
 ### `POST /api/redact`  (multipart : `image`, `entry_id`, `boxes` = JSON `[[x0,y0,x1,y1], …]`)  — option
@@ -88,6 +93,6 @@ Quand rien n'est trouvé : `verdict = "unknown"`, `found_by = null`, et `anchor`
 | verdict | badge |
 |---|---|
 | `real` | 🟢 Real |
-| `edited` | 🟠 Edited + heatmap |
+| `edited` | 🟠 Edited + heatmap (ou modification signée : afficher `history`) |
 | `ai` | 🔵 AI-generated |
 | `unknown` | ⚪ Unknown (≠ fake) + `reason` |
