@@ -58,3 +58,18 @@ def test_non_retroactive_revocation_on_real_history():
     now_valid = ledger.credential_type(device) is CredentialType.CAPTURE_DEVICE
     assert (ledger.credential_revoked_at(device) is None) == now_valid
     print(f"\n{len(intervals)} validity interval(s):", intervals)
+
+
+def test_registry_root_in_force_matches_local_registry():
+    """The root published by scripts/setup_testnet.py is the Poseidon root of
+    keys/registry_devices.json: anonymous proofs made from that file verify against it."""
+    import time
+
+    from tileproof import zk
+
+    reg = KEYS / "registry_devices.json"
+    if not reg.exists():
+        pytest.skip("anonymous registry not set up: run scripts/setup_testnet.py")
+    ledger = XrplLedger(keys_dir=KEYS)
+    pks = json.loads(reg.read_text())["pks"]
+    assert ledger.registry_root_at(int(time.time()) + 60) == zk.root(pks)
