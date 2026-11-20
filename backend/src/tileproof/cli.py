@@ -4,6 +4,9 @@
   tileproof verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   tileproof redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
   tileproof demo IMAGE -o OUT_DIR              -> the six demo scenarios offline (FakeLedger)
+  tileproof calibrate ORIG_DIR SHARED_DIR -o OUT.json
+                                               -> robust-tile / phash margins on real shared copies
+                                                  (same file stem in both dirs, e.g. IMG_1.jpg / IMG_1.jpeg)
 """
 
 from __future__ import annotations
@@ -158,6 +161,40 @@ def cmd_demo(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_calibrate(a: argparse.Namespace) -> int:
+    from . import features as F
+    from .commitment import TileStatus
+    from .perceptual import phash
+
+    shared = {p.stem: p for p in Path(a.shared).iterdir() if p.is_file()}
+    pairs: dict[str, dict] = {}
+    for orig in sorted(Path(a.originals).iterdir()):
+        if orig.stem not in shared:
+            continue
+        src, recv = load_rgb(orig), load_rgb(shared[orig.stem])
+        manifest, disclosure = commit(src, os.urandom(32))
+        res = verify(recv, manifest, disclosure)
+        pairs[orig.stem] = {
+            "size": [src.shape[1], src.shape[0]],
+            "received_size": [recv.shape[1], recv.shape[0]],
+            "changed_tiles": sum(s == TileStatus.CHANGED for s in res.statuses),
+            "tiles": len(res.statuses),
+            "max_tile_distance": round(max(res.distances), 2),
+            "p99_tile_distance": round(sorted(res.distances)[int(0.99 * (len(res.distances) - 1))], 2),
+            "phash_distance": (phash(src) ^ phash(recv)).bit_count(),
+        }
+        print(f"{orig.stem:20} changed={pairs[orig.stem]['changed_tiles']:5} "
+              f"max={pairs[orig.stem]['max_tile_distance']:6} phash={pairs[orig.stem]['phash_distance']}")
+    report = {
+        "tolerance": F.TOLERANCE,
+        "pairs": pairs,
+        "all_pass": bool(pairs) and all(p["changed_tiles"] == 0 and p["phash_distance"] <= 10 for p in pairs.values()),
+    }
+    _write_json(Path(a.out), report)
+    print(f"all_pass={report['all_pass']} (tolerance {F.TOLERANCE}) -> {a.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tileproof")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -187,6 +224,12 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("image")
     dm.add_argument("-o", "--out", required=True)
     dm.set_defaults(fn=cmd_demo)
+
+    cb = sub.add_parser("calibrate", help="measure tile/phash margins on real shared copies")
+    cb.add_argument("originals")
+    cb.add_argument("shared")
+    cb.add_argument("-o", "--out", required=True)
+    cb.set_defaults(fn=cmd_calibrate)
 
     a = p.parse_args(argv)
     return a.fn(a)
