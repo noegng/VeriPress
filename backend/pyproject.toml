@@ -8,8 +8,13 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "cryptography>=50.0.2",
+    "fastapi>=0.165.0",
     "numpy>=2.5.5",
     "pillow>=13.0.0",
+    "python-multipart>=0.0.34",
+    "uvicorn[standard]>=0.54.0",
+    "xrpl-py>=5.2.0",
 ]
 
 [build-system]

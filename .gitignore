@@ -6,3 +6,7 @@ __pycache__/
 seeds*.json
 dist/
 .DS_Store
+backend/keys/
+backend/store/
+keys/
+store/

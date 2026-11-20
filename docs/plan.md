@@ -14,7 +14,7 @@
 
 | When | Goal |
 |---|---|
-| Fri evening | Repo + docs ✅ · tiling + exact/robust Merkle trees · XRPL Devnet setup script (registry, credentials) |
+| Fri evening | Repo + docs ✅ · tiling + exact/robust Merkle trees · XRPL Testnet setup script (registry, credentials) |
 | Fri night | Anchor + verify end-to-end (🟢 / 🟠 heatmap) · robust tree calibrated on JPEG recompression |
 | Sat early morning | Watermark (TrustMark) · redaction · AI-generator credential · WebAuthn (fallback Ed25519) |
 | Sat 10:00 | **Feature freeze** — record backup demo video, rehearse pitch |
@@ -45,3 +45,13 @@
 - Is Devnet stable for the demo tomorrow? Any reset planned?
 - Track 1 details from the slides: required dataset/format/constraints?
 - Pitch length, Q&A, submission format (repo / video / slides)?
+
+## Decisions (Fri 20 Nov, grilling session)
+
+- Network: **XRPL Testnet** (more stable than Devnet; Credentials active). Anchor = Payment 1 drop + Memo.
+- Signing: Ed25519 software key (= XRPL ed25519 account key, subject of its Credential). WebAuthn = option.
+- Demo steps kept: 1, 2, 3 (WhatsApp image prepared in advance), 6; step 4 if time; step 5 needs the watermark.
+- Lookup without watermark: 64-bit perceptual hash in the off-chain store.
+- UI: single FastAPI-served page first; Merkle-tree ↔ image visualisation as option.
+- Options order: TrustMark watermark · redaction in UI · tree visualisation · WebAuthn passkey · version chain (`parent`).
+- Work split and rules: see `docs/team-rules.md`.
