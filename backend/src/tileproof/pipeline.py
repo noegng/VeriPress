@@ -27,6 +27,7 @@ from .tiling import Grid
 from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
+from . import watermark
 from .signing import load_key, verify_signature
 from .store import Entry, Store
 
@@ -108,7 +109,12 @@ def _png(img: np.ndarray | Image.Image) -> bytes:
 def sign_image(rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish."""
     key = load_key(signer)
+    wm_id = b""
+    if watermark.enabled():
+        wm_id = os.urandom(8)
+        rgb = watermark.embed(rgb, wm_id)  # commit covers the watermarked pixels
     manifest, disclosure = commit(rgb, os.urandom(32))
+    manifest.wm_id = wm_id.hex()
     manifest.signer = key.public_key
     manifest.op = "ai_generate" if signer == "ai" else "capture"
     digest = manifest.digest()
@@ -127,8 +133,14 @@ def verify_image(
     if entry_id:
         entry, found_by = store.get(entry_id), "tx_hash"
     else:
-        entry = store.nearest(phash(rgb))
-        found_by = "phash" if entry else None
+        entry, ph = None, phash(rgb)
+        wm = watermark.extract(rgb) if watermark.enabled() else None
+        if wm is not None:
+            entry = store.find_by_watermark(wm.hex(), ph)
+            found_by = "watermark" if entry else None
+        if entry is None:
+            entry = store.nearest(ph)
+            found_by = "phash" if entry else None
     if entry is None:
         reason = f"No provenance record for id {entry_id}" if entry_id else "No provenance found for this image"
         return Report(FinalVerdict.UNKNOWN, reason, None, None, None, None, False, None), None
@@ -150,6 +162,9 @@ def verify_image(
     elif tiles.verdict == Verdict.INVALID_DISCLOSURE:
         verdict = FinalVerdict.UNKNOWN
         reason = "Tile disclosure does not match the signed Merkle roots"
+    elif found_by == "watermark" and tiles.counts()["changed"] > len(tiles.statuses) // 2:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Watermark points to a record whose content does not match this image (copied watermark?)"
     elif tiles.verdict == Verdict.EDITED:
         verdict = FinalVerdict.EDITED
     elif credential == CredentialType.AI_GENERATOR:

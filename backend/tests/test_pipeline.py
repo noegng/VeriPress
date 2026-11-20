@@ -140,8 +140,9 @@ def test_anchor_missing_on_ledger_is_unknown(photo, ledger, store):
     assert "anchor" in report.reason.lower()
 
 
-def test_whatsapp_like_copy_is_found_by_phash_and_real(photo, ledger, store):
-    """Metadata stripped, downscaled, recompressed, no id given: found by perceptual hash."""
+def test_whatsapp_like_copy_is_found_by_phash_and_real(photo, ledger, store, monkeypatch):
+    """Metadata stripped, downscaled, recompressed, no id, no watermark: perceptual hash fallback."""
+    monkeypatch.setenv("TILEPROOF_WATERMARK", "0")
     sign_image(photo, "device", ledger, store)
     shared = jpeg(rescale(photo, 0.5), 70)
     report, _ = verify_image(shared, ledger, store)
@@ -209,3 +210,24 @@ def test_redacted_copy_is_found_by_phash(photo, ledger, store):
     rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(0, 0, 320, 240)], store)
     report, _ = verify_image(jpeg(png_to_rgb(red_png), 80), ledger, store)
     assert report.entry_id == rid and report.verdict == FinalVerdict.REAL
+
+
+def test_whatsapp_like_copy_is_found_by_watermark_and_real(photo, ledger, store):
+    signed, png = sign_image(photo, "device", ledger, store)
+    shared = jpeg(rescale(png_to_rgb(png), 0.5), 60)
+    report, _ = verify_image(shared, ledger, store)
+    assert report.found_by == "watermark"
+    assert report.entry_id == signed.entry_id
+    assert report.verdict == FinalVerdict.REAL
+
+
+def test_watermark_copied_onto_another_image_is_detected(photo, ledger, store):
+    from conftest import photo_like
+    from tileproof.watermark import embed
+
+    signed, _ = sign_image(photo, "device", ledger, store)
+    fake = embed(photo_like(seed=11), bytes.fromhex(signed.manifest.wm_id))
+    report, _ = verify_image(jpeg(fake, 85), ledger, store)
+    assert report.found_by == "watermark"
+    assert report.verdict == FinalVerdict.UNKNOWN
+    assert "watermark" in report.reason.lower()
