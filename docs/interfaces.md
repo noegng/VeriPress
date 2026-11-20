@@ -7,9 +7,12 @@ Toute modification de ce fichier, de `ledger.py`, `store.py` ou des signatures d
 | Module | Propriétaire | Rôle |
 |---|---|---|
 | `tileproof/ledger.py` | Dev B | `Ledger` (protocole), `FakeLedger` (mémoire), `XrplLedger` (Testnet) |
-| `tileproof/store.py` | Dev A | stockage hors chaîne : manifeste + divulgation + image publiée + phash |
+| `tileproof/store.py` | Dev A | stockage hors chaîne : manifeste + divulgation + image publiée + phash ; `find_by_watermark(wm_id, phash)` |
+| `tileproof/watermark.py` | Dev A | TrustMark : `embed`, `extract`, `warm_up()` (charge les modèles ; à appeler au démarrage de l'API). `TILEPROOF_WATERMARK=0` le désactive |
 | `tileproof/pipeline.py` | Dev A | `sign_image`, `verify_image`, `redact_image`, `Report.to_json` |
 | `tileproof/api.py` | Dev B | FastAPI, appelle uniquement `pipeline.*` |
+
+Le manifeste signé contient `signer`, `op` (`capture` | `ai_generate`) et `wm_id` (hex 64 bits du filigrane, choisi à la signature : l'image est tatouée **avant** l'engagement).
 
 Le choix du ledger se fait par la variable d'env. `TILEPROOF_LEDGER=fake|xrpl` (défaut `fake`), lue dans `api.py`.
 
