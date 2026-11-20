@@ -69,7 +69,7 @@
   .hint { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
   canvas.overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
   canvas.overlay.passive { pointer-events: none; }
-  h3.sub { font-size: 15px; margin: 18px 0 8px; } h3.sub small { color: var(--muted); font-weight: 400; }
+  h2.sub { font-size: 15px; margin: 18px 0 8px; } h2.sub small { color: var(--muted); font-weight: 400; }
   #tree { width: 100%; height: 150px; display: block; transform: scaleY(-1); cursor: pointer; touch-action: none; }
   #tree rect { stroke: var(--card); stroke-width: .6; vector-effect: non-scaling-stroke; }
   #tree rect.path { stroke: var(--ink); stroke-width: 2; }
@@ -153,14 +153,14 @@
       </div>
       <div class="counts" id="counts"></div>
       <div id="treeBox" hidden>
-        <h3 class="sub">Merkle tree <small id="treeHint">— tap a tile or a node</small></h3>
+        <h2 class="sub">Merkle tree <small id="treeHint">— tap a tile or a node</small></h2>
         <div class="treeaxis">⛓️ root — anchored on XRPL</div>
         <svg id="tree" preserveAspectRatio="none" role="img" aria-label="Merkle tree of the image tiles"></svg>
         <div class="treeaxis" id="treeLeaves">▦ leaves — one per tile</div>
       </div>
       <dl id="verifyInfo"></dl>
       <div id="historyBox" hidden>
-        <h3 class="sub">Version history</h3>
+        <h2 class="sub">Version history</h2>
         <ol class="history" id="history"></ol>
       </div>
       <div class="row" id="redactCtl" hidden>
