@@ -9,6 +9,8 @@ are blocking, so they run in the threadpool to keep the event loop responsive.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import html
 import io
 import json
@@ -66,10 +68,15 @@ def make_ledger() -> Ledger:
         raise RuntimeError(f"VERIPRESS_LEDGER must be fake|xrpl, got {kind!r}")
     ledger = FakeLedger()
     # Offline demo: trust the demo keys like the real registry would. Same folder as signing.py.
+    pk_file = keys_dir() / "passkey.json"
+    passkey = json.loads(pk_file.read_text()) if pk_file.exists() else {}
     for name, ctype in (("device", CredentialType.CAPTURE_DEVICE), ("ai", CredentialType.AI_GENERATOR)):
         p = keys_dir() / f"{name}.json"
         if p.exists():
-            ledger.issue(json.loads(p.read_text())["public_key"], ctype)
+            # The device credential carries the attested passkey, as setup_testnet.py --passkey does.
+            attested = name == "device" and passkey.get("attested")
+            ledger.issue(json.loads(p.read_text())["public_key"], ctype,
+                         passkey_hash=passkey["sha256"] if attested else None)
     # ...and publish the anonymous registry root, as setup_testnet.py does on XRPL.
     reg = keys_dir() / "registry_devices.json"
     if reg.exists():
@@ -301,6 +308,118 @@ async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None
         pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id
     )
     return report.to_json(heatmap)
+
+
+# --- Passkey (phase 2 task 6, decisions.md Q21-Q23) ------------------------------------------
+# Registration only stores a CANDIDATE key, from this machine only: the server listens on
+# 0.0.0.0 for the phone, and anyone on the room's Wi-Fi must not bind their own passkey to the
+# accredited device. The registry then attests it explicitly: setup_testnet.py --passkey.
+
+LOCAL_CLIENTS = {"127.0.0.1", "::1"}
+
+
+def _b64url_decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _passkey_file() -> Path:
+    return keys_dir() / "passkey.json"
+
+
+def _device_pubkey() -> str | None:
+    p = keys_dir() / "device.json"
+    return json.loads(p.read_text())["public_key"] if p.exists() else None
+
+
+@app.post("/api/passkey/register")
+async def passkey_register(request: Request) -> dict:
+    """Body {credential_id, public_key}: base64url credential id and SPKI DER public key, as
+    returned by navigator.credentials.create() / getPublicKey(). Saves the P-256 key in SEC1
+    uncompressed form (contract) and its sha256, to be attested by the registry."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_der_public_key
+
+    if request.client is None or request.client.host not in LOCAL_CLIENTS:
+        raise HTTPException(403, "passkey registration is only allowed from the demo laptop (localhost)")
+    try:
+        body = await request.json()
+        cred_id = str(body["credential_id"])
+        key = load_der_public_key(_b64url_decode(str(body["public_key"])))
+        _b64url_decode(cred_id)
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(422, f"bad passkey registration: {e}") from e
+    if not isinstance(key, ec.EllipticCurvePublicKey) or not isinstance(key.curve, ec.SECP256R1):
+        raise HTTPException(422, "passkey must be ECDSA P-256 (COSE alg -7)")
+    sec1 = key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    sha = hashlib.sha256(sec1).hexdigest()
+    path = _passkey_file()
+    path.write_text(json.dumps({"credential_id": cred_id, "public_key": sec1.hex(), "sha256": sha,
+                                "spki": _b64url(key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))}, indent=2))
+    path.chmod(0o600)
+    return {"sha256": sha, "next": "uv run python scripts/setup_testnet.py --passkey  (registry attests it)"}
+
+
+@app.get("/api/passkey")
+async def passkey_status() -> dict:
+    """What the page needs to offer 'Sign with passkey': the credential id to request, the
+    public key to send with the assertion, and whether the registry attests it."""
+    path = _passkey_file()
+    if not path.exists():
+        return {"registered": False, "attested": False}
+    data = json.loads(path.read_text())
+    device = _device_pubkey()
+    attested = bool(device) and await run_in_threadpool(app.state.ledger.credential_passkey, device) == data["sha256"]
+    return {"registered": True, "attested": attested, "credential_id": data["credential_id"],
+            "public_key": data["spki"], "sha256": data["sha256"]}
+
+
+def _pipeline_fn(name: str):
+    fn = getattr(pipeline, name, None)
+    if fn is None:  # Dev A's server-side WebAuthn verification not merged yet
+        raise HTTPException(503, f"passkey signing not available yet (pipeline.{name})")
+    return fn
+
+
+@app.post("/api/sign/passkey/prepare")
+async def passkey_prepare(image: UploadFile = File(...), parent: str | None = Form(None)) -> dict:
+    prepare = _pipeline_fn("prepare_passkey_sign")
+    parent = (parent or "").strip().upper() or None
+    if parent and not PARENT.match(parent):
+        raise HTTPException(422, "parent must be a tx hash")
+    data, rgb = await read_upload(image)
+    exif = await run_in_threadpool(metadata.exif_from_upload, data)
+    try:
+        return await run_in_threadpool(lambda: prepare(rgb, app.state.store, parent, exif=exif))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.post("/api/sign/passkey/complete")
+async def passkey_complete(request: Request) -> dict:
+    complete = _pipeline_fn("complete_passkey_sign")
+    try:
+        body = await request.json()
+        prep_id, assertion = str(body["prep_id"]), dict(body["assertion"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(422, "body must be {prep_id, assertion}") from e
+    try:
+        result, _png = await run_in_threadpool(complete, prep_id, assertion, app.state.ledger, app.state.store)
+    except KeyError as e:
+        raise HTTPException(404, "unknown or expired prep_id") from e
+    except ValueError as e:  # assertion does not verify / passkey not attested…
+        raise HTTPException(422, str(e)) from e
+    except RuntimeError as e:  # anchor tx rejected
+        raise HTTPException(502, str(e)) from e
+    body = result.to_json()
+    body.setdefault("anonymous", False)
+    body.setdefault("pending", not result.anchor.validated)
+    body.setdefault("meta_claims", [])
+    body.setdefault("passkey", True)
+    return body
 
 
 @app.post("/api/redact")
