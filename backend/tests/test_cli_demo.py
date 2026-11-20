@@ -79,3 +79,31 @@ def test_demo_batch_anchors_many_photos_in_one_transaction(tmp_path, monkeypatch
     assert summary["transactions"] == 1 and summary["size"] == 4
     assert [p["verdict"] for p in summary["photos"]] == ["real"] * 4
     assert {p["batch"]["tx_hash"] for p in summary["photos"]} == {summary["batch_tx"]}
+
+
+def test_prepare_demo_builds_the_pitch_assets_and_checks_them(tmp_path, monkeypatch):
+    """One command re-signs every demo asset (into the API's store) and checks each verdict."""
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")
+    monkeypatch.setenv("VERIPRESS_C2PA", "0")
+    demo = tmp_path / "demo"
+    (demo / "originals").mkdir(parents=True)
+    (demo / "ai").mkdir()
+    for s in range(3):
+        Image.fromarray(photo_like(seed=s)).save(demo / "originals" / f"IMG_{s}.png")
+    Image.fromarray(photo_like(seed=9)).save(demo / "ai" / "gen.png")
+    keys, store, out = tmp_path / "keys", tmp_path / "store", tmp_path / "signed"
+    keys.mkdir()
+    from xrpl.constants import CryptoAlgorithm
+    from xrpl.wallet import Wallet
+
+    for name in ("device", "ai"):
+        w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
+        (keys / f"{name}.json").write_text(json.dumps({"public_key": w.public_key, "private_key": w.private_key}))
+    monkeypatch.setenv("VERIPRESS_KEYS", str(keys))
+    assert main(["prepare-demo", "--demo", str(demo), "--store", str(store), "-o", str(out),
+                 "--photo", "IMG_1.png", "--offline"]) == 0
+    s = json.loads((out / "summary.json").read_text())
+    assert all(a["ok"] for a in s["assets"]), [a for a in s["assets"] if not a["ok"]]
+    names = {a["file"] for a in s["assets"]}
+    assert {"1_signed.png", "2_edited.jpg", "3_whatsapp_sim.jpg", "6_ai_signed.png", "11_batch_1.png"} <= names
+    assert (out / "RUNBOOK.md").read_text().count("| ✅") == len(s["assets"])
