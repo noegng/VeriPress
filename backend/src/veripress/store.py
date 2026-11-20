@@ -95,6 +95,22 @@ class Store:
             return []
         return data if isinstance(data, list) else []
 
+    def put_receipt(self, entry_id: str, receipt: dict) -> None:
+        """Aggregated anchoring: {batch_tx, index, leaf, proof} or {queued: leaf} (untrusted)."""
+        if valid_id(entry_id):
+            (self.root / entry_id).mkdir(parents=True, exist_ok=True)
+            (self.root / entry_id / "receipt.json").write_text(json.dumps(receipt, separators=(",", ":")))
+
+    def get_receipt(self, entry_id: str) -> dict | None:
+        p = self.root / entry_id / "receipt.json" if valid_id(entry_id) else None
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
     def image_path(self, entry_id: str) -> Path:
         if not valid_id(entry_id):
             return self.root / "_invalid_id_" / "image.png"  # never exists

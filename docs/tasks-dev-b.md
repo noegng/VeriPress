@@ -87,6 +87,14 @@ Tout est dans `tasks-dev-a.md` § « Retours de Dev B » (PR #26). Pour le **poi
 
 Compte rendu : `docs/security-review.md`. Pour la page : le champ `c2pa` de `/api/verify` doit rester une **information** (« manifeste C2PA présent, certificat non reconnu »), jamais un ✓ de provenance. N'importe qui peut fabriquer un manifeste qui pointe vers n'importe quel ancrage.
 
+## Ancrage groupé (Dev A, 20/11 ~19 h 30)
+
+Contrat dans `interfaces.md` § « Ancrage groupé ». À faire dans `XrplLedger` :
+- `anchor_batch(root, count, wait)` : Payment avec le Memo `veripress/v1` `{"b": root, "n": count}` ;
+- `fetch_anchor` : reconnaître ce Memo et renvoyer `Anchor(digest=root, batch_size=n, signature="", pubkey="")`.
+
+Option côté page : un mode « lot » (plusieurs fichiers, puis « Anchor batch »), et afficher `batch` (« ancrée dans le lot <tx>, n° i sur N »).
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. ~13 h — phase 1 :** script Testnet, `XrplLedger`, API (branchée sur le vrai pipeline), page (signer / vérifier, heatmap, masquage, arbre ↔ image, historique, lien public), retours de revue 1–7. Répétition complète en `xrpl` + filigrane : les 6 étapes passent.
