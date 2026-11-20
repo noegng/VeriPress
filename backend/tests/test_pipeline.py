@@ -245,3 +245,17 @@ def test_signed_edit_links_back_to_the_original(photo, ledger, store):
     assert [h["tx_hash"] for h in report.history] == [version.entry_id, original.entry_id]
     assert [h["op"] for h in report.history] == ["edit", "capture"]
     assert report.to_json()["history"] == report.history
+
+
+def test_every_verdict_explains_itself(photo, ledger, store):
+    signed, png = sign_image(photo, "device", ledger, store)
+    edited = png_to_rgb(png).copy()
+    edited[100:200, 100:200] = 0
+    ai, ai_png = sign_image(photo, "ai", ledger, store)
+    for rgb, eid, needle in [
+        (png_to_rgb(png), signed.entry_id, "capture_device"),
+        (edited, signed.entry_id, "changed"),
+        (png_to_rgb(ai_png), ai.entry_id, "ai_generator"),
+    ]:
+        report, _ = verify_image(rgb, ledger, store, entry_id=eid)
+        assert needle in report.reason.lower()

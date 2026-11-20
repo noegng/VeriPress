@@ -173,13 +173,18 @@ def verify_image(
         reason = "Watermark points to a record whose content does not match this image (copied watermark?)"
     elif tiles.verdict == Verdict.EDITED:
         verdict = FinalVerdict.EDITED
+        c = tiles.counts()
+        reason = f"{c['changed']}/{len(tiles.statuses)} tiles changed since signing"
     elif manifest.op == "edit" and credential is not None:
         verdict = FinalVerdict.EDITED
         reason = f"Signed edit of {manifest.parent} by a {credential.value} credential"
-    elif credential == CredentialType.AI_GENERATOR:
-        verdict = FinalVerdict.AI
-    elif credential == CredentialType.CAPTURE_DEVICE:
-        verdict = FinalVerdict.REAL
+    elif credential in (CredentialType.AI_GENERATOR, CredentialType.CAPTURE_DEVICE):
+        verdict = FinalVerdict.AI if credential == CredentialType.AI_GENERATOR else FinalVerdict.REAL
+        c, n = tiles.counts(), len(tiles.statuses)
+        how = "identical" if tiles.verdict == Verdict.INTACT else "match after recompression"
+        reason = f"Signed by a {credential.value} credential; {n - c['redacted']}/{n} tiles {how}"
+        if c["redacted"]:
+            reason += f", {c['redacted']} redacted by the owner"
     else:
         verdict = FinalVerdict.UNKNOWN
         reason = "Signer has no valid credential (never issued or revoked)"

@@ -3,6 +3,7 @@
   tileproof commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
   tileproof verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   tileproof redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
+  tileproof demo IMAGE -o OUT_DIR              -> the six demo scenarios offline (FakeLedger)
 """
 
 from __future__ import annotations
@@ -77,6 +78,86 @@ def cmd_redact(a: argparse.Namespace) -> int:
     return 0
 
 
+def _jpeg(rgb, quality: int, scale: float = 1.0):
+    import io
+
+    import numpy as np
+
+    img = Image.fromarray(rgb)
+    if scale != 1.0:
+        img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=quality)
+    return np.asarray(Image.open(buf).convert("RGB"))
+
+
+def cmd_demo(a: argparse.Namespace) -> int:
+    """Play the pitch scenarios end to end with an in-memory ledger (backup demo)."""
+    import io
+
+    import numpy as np
+    from xrpl.constants import CryptoAlgorithm
+    from xrpl.wallet import Wallet
+
+    from .ledger import CredentialType, FakeLedger
+    from .pipeline import redact_image, sign_image, verify_image
+    from .signing import load_key
+    from .store import Store
+    from .watermark import embed
+
+    out = Path(a.out)
+    keys = out / "keys"
+    keys.mkdir(parents=True, exist_ok=True)
+    for name in ("device", "ai"):
+        if not (keys / f"{name}.json").exists():
+            w = Wallet.create(algorithm=CryptoAlgorithm.ED25519)
+            _write_json(keys / f"{name}.json", {"public_key": w.public_key, "private_key": w.private_key})
+    os.environ["TILEPROOF_KEYS"] = str(keys)
+    ledger, store = FakeLedger(), Store(out / "store")
+    ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
+    ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
+
+    def rgb_of(png: bytes):
+        return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
+
+    summary: dict[str, dict] = {}
+
+    def check(name: str, rgb) -> None:
+        Image.fromarray(rgb).save(out / f"{name}.png")
+        report, hm = verify_image(rgb, ledger, store)
+        if hm:
+            (out / f"{name}.heatmap.png").write_bytes(hm)
+        j = report.to_json()
+        summary[name] = {k: j[k] for k in ("verdict", "reason", "found_by", "credential")}
+        summary[name]["tiles"] = j["tiles"]["counts"] if j["tiles"] else None
+        print(f"{name:20} {j['verdict']:8} via {str(j['found_by']):9} {j['reason']}")
+
+    src = load_rgb(a.image)
+    h, w = src.shape[:2]
+    original, png = sign_image(src, "device", ledger, store)
+    signed = rgb_of(png)
+    check("1_capture", signed)
+
+    edited = signed.copy()
+    edited[h * 3 // 8 : h * 5 // 8, w * 3 // 8 : w * 5 // 8] = (255, 0, 255)
+    check("2_edited", _jpeg(edited, 90))
+
+    check("3_whatsapp", _jpeg(signed, 60, scale=min(1.0, 1600 / max(h, w), 0.5)))
+
+    _, red_png = redact_image(signed, original.entry_id, [(w // 8, h // 8, w * 3 // 8, h * 3 // 8)], store)
+    check("4_redacted", rgb_of(red_png))
+
+    wm_id = bytes.fromhex(original.manifest.wm_id)
+    check("5_copied_watermark", _jpeg(embed(np.ascontiguousarray(np.rot90(src, 2)), wm_id), 85))
+
+    _, ai_png = sign_image(np.ascontiguousarray(src[:, ::-1]), "ai", ledger, store)
+    check("6_ai", rgb_of(ai_png))
+
+    _write_json(out / "summary.json", summary)
+    print(f"written to {out}/")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tileproof")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -101,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--box", action="append", required=True, help="x0,y0,x1,y1 (repeatable)")
     r.add_argument("-o", "--out", required=True)
     r.set_defaults(fn=cmd_redact)
+
+    dm = sub.add_parser("demo", help="play the six demo scenarios offline")
+    dm.add_argument("image")
+    dm.add_argument("-o", "--out", required=True)
+    dm.set_defaults(fn=cmd_demo)
 
     a = p.parse_args(argv)
     return a.fn(a)
