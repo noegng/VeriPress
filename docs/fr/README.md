@@ -67,7 +67,7 @@ Pour chaque tuile, on calcule deux empreintes, avec un **sel** (16 octets aléat
 | Arbre | Ce qu'on hache | Ce qu'il prouve |
 |---|---|---|
 | **Exact** | Les octets bruts des pixels de la tuile | Que les pixels sont **identiques au bit près** |
-| **Robuste** | Un **résumé** de la tuile : luminosité, réduite à 8×8, puis transformée DCT (comme JPEG), et on garde les 10 premiers coefficients, arrondis | Que le **contenu** est le même, même après recompression ou redimensionnement |
+| **Robuste** | Un **résumé** de la tuile, réduite à 8×8 puis transformée DCT (comme JPEG) : 15 coefficients de luminosité (formes, puis détails fins) et 3 par canal de couleur (Cb, Cr), arrondis | Que le **contenu** est le même (formes, couleurs, texture grossière), même après recompression ou redimensionnement |
 
 Les deux arbres donnent deux racines : `exact_root` et `robust_root`.
 
@@ -132,18 +132,17 @@ Ce qui se passe quand on dépose une image dans « Vérifier » (`pipeline.verif
 
 ### 4.1 Retrouver la fiche
 
-Dans cet ordre :
+1. si on donne l'identifiant (`entry_id`), on n'utilise que celle-là ;
+2. sinon on prend comme **candidates** toutes les fiches qui ont l'identifiant du **filigrane** (`wm_id`), puis toutes celles dont le **pHash** est proche. Le pHash est une empreinte « perceptuelle » de 64 bits, qui change peu quand l'image est recompressée.
 
-1. si on donne l'identifiant (`entry_id`), on l'utilise ;
-2. sinon on lit le **filigrane** → `wm_id` → la fiche qui a cet identifiant ;
-3. sinon (filigrane illisible) on calcule le **pHash** de l'image (une empreinte « perceptuelle » de 64 bits, qui change peu quand l'image est recompressée) et on prend la fiche la plus proche.
+On vérifie **chaque** candidate jusqu'au bout (étapes suivantes), et on garde le meilleur verdict. **Pourquoi :** n'importe qui peut ajouter une fiche dans le store. Avant, une fausse « variante masquée » d'une vraie photo, fabriquée avec des données publiques, passait en premier et faisait sortir la vraie photo en ⚪.
 
-Le filigrane et le pHash ne servent **qu'à retrouver** la fiche. Ils ne prouvent rien. La preuve vient des étapes suivantes.
+Le filigrane et le pHash ne servent **qu'à retrouver** les fiches. Ils ne prouvent rien. La preuve vient des étapes suivantes.
 
 ### 4.2 Vérifier l'ancrage et la signature
 
 - On lit la transaction sur XRPL.
-- Selon le mode, on vérifie la signature Ed25519, la preuve ZK ou l'assertion passkey (et la signature ML-DSA si le manifeste en annonce une).
+- Selon le mode, on vérifie la signature Ed25519, la preuve ZK ou l'assertion passkey. La signature ML-DSA est exigée si le manifeste en annonce une, **ou** si le registre avait attesté une clé ML-DSA pour cet appareil au moment de l'ancrage.
 - On vérifie que l'appareil avait un **Credential valide au moment de l'ancrage**. S'il a été révoqué *après*, la photo reste 🟢, avec la mention « révoqué depuis le … ».
 
 ### 4.3 Vérifier que le store n'a pas menti
@@ -160,13 +159,17 @@ On remet l'image reçue à la taille d'origine (WhatsApp l'a réduite), puis pou
 | Statut | Test | Couleur sur la carte |
 |---|---|---|
 | **exact** | le hash des pixels est identique à celui signé | vert |
-| **robust** | le résumé DCT est proche : écart ≤ 4,5 pas (de la version tatouée **ou** de l'original) | vert |
+| **robust** | le résumé est proche : écart pondéré ≤ 4,5 pas (de la version tatouée **ou** de l'original). Poids : 0,5 sur la luminosité moyenne, 0,75 sur les détails, 0,25 sur la couleur | vert |
 | **changed** | écart > 4,5 pas : le contenu a changé | rouge |
 | **redacted** | tuile masquée par le propriétaire : vérifiée par son hash, et elle doit vraiment être noire | noir |
 
 **Exemple concret :** la photo signée, envoyée par WhatsApp, arrive en 1600×1200 JPEG. On la remet en 4032×3024. Aucune tuile n'est « exact » (les pixels ont bougé), mais les 1 131 sont « robust » (écart max mesuré : ~2). Résultat : 🟢 « 1131/1131 tiles match after recompression ».
 
-**Pourquoi 4,5 :** calibré sur de vraies photos passées par WhatsApp. La pire tuile non retouchée était à 2,96, et une retouche de 2 tuiles est détectée à 100 %.
+**Pourquoi 4,5 :** calibré sur de vraies photos passées par WhatsApp. La pire tuile non retouchée est à ~4, et une retouche de 2 tuiles est détectée à 100 %.
+
+**Pourquoi la couleur et les détails :** avant la revue adversariale, le résumé ne regardait que la luminosité grossière. Inverser les couleurs d'une zone (rouge → cyan) ou la flouter donnait 🟢. Maintenant c'est 🟠, même après JPEG (pour un flou de rayon ≥ 5 px).
+
+**Copie sans perte (PNG) :** si au moins la moitié des tuiles texturées sont encore « exact », la copie n'a pas été recompressée. Il n'y a donc aucun bruit à pardonner : une tuile seulement « robust » a été retouchée, elle passe en **changed**. Une tuile masquée doit alors être vraiment noire. Les tuiles unies (ciel blanc) ne comptent pas, car elles peuvent sortir d'un JPEG intactes.
 
 **« Exact » veut dire pixels identiques, pas fichier identique :** une image dont on a juste retiré les métadonnées reste « exact ». En revanche, l'original non tatoué ne peut jamais être « exact » (ses pixels ne sont pas ceux qui ont été signés) : il ressort « robust », avec la mention « match the original capture (unwatermarked) ».
 
@@ -175,7 +178,7 @@ On remet l'image reçue à la taille d'origine (WhatsApp l'a réduite), puis pou
 On applique les règles dans l'ordre, et la première qui s'applique gagne :
 
 1. rien trouvé, ancrage absent, signature ou preuve invalide, store incohérent → ⚪ **Unknown** ;
-2. retrouvée par filigrane mais plus de la moitié des tuiles ont changé → ⚪ (« filigrane copié ? ») ;
+2. plus de la moitié des tuiles ont changé → ⚪ : ce n'est pas la photo de cette fiche (« filigrane copié ? » si on l'a trouvée par le filigrane). Ce n'est pas 🟠, sinon un lien piégé ferait passer n'importe quelle image pour « une retouche d'une vraie photo » ;
 3. des tuiles ont changé → 🟠 **Edited**, avec la carte ;
 4. plus de 50 % de l'image masquée → ⚪ (ça ne prouve plus grand-chose) ;
 5. retouche signée (`op = edit`) → 🟠, avec l'historique des versions ;
@@ -234,7 +237,7 @@ Chaque appareil a aussi une clé « Baby Jubjub » (adaptée aux circuits ZK). L
 ### 6.6 Passkey et post-quantique
 
 - **Passkey** : la signature vient de Touch ID (puce sécurisée du Mac). Le registre a écrit le hash de cette passkey dans le Credential de l'appareil, donc on sait que c'est la bonne. Pas compatible avec le mode anonyme.
-- **Post-quantique** : en plus d'Ed25519, on signe avec **ML-DSA-87** (norme FIPS 204, résistante aux ordinateurs quantiques). Le registre atteste aussi cette clé. Si le manifeste annonce une signature ML-DSA, elle devient **obligatoire** : supprimer `pq.json` donne ⚪, pas un 🟢 dégradé.
+- **Post-quantique** : en plus d'Ed25519, on signe avec **ML-DSA-87** (norme FIPS 204, résistante aux ordinateurs quantiques). Le registre atteste aussi cette clé. Si le manifeste annonce une signature ML-DSA, elle devient **obligatoire** : supprimer `pq.json` donne ⚪, pas un 🟢 dégradé. Et si le registre avait attesté une clé ML-DSA pour l'appareil au moment de l'ancrage, un manifeste signé en Ed25519 seul donne ⚪ : sinon, après l'arrivée des ordinateurs quantiques, un faussaire n'aurait qu'à ne pas annoncer la clé.
 
 ### 6.7 Fenêtre de temps [T0, T1]
 
@@ -261,6 +264,9 @@ La page affiche « signée entre 14:02:31 et 14:02:52 UTC ».
 - **Trou analogique** : photographier un écran avec un appareil accrédité donne une vraie signature.
 - **Dans la démo, l'« appareil », c'est le serveur** (clé logicielle) ou la passkey du portable. En production, la clé serait dans le capteur de l'appareil photo.
 - **Les résumés robustes sont attaquables** (on peut fabriquer une image différente avec des résumés proches). C'est pour ça qu'ils ne servent qu'à localiser les changements, jamais d'authentification à eux seuls.
+- **Après JPEG, 🟢 ne garantit pas les détails fins** : un flou de rayon ≤ 4 px, ou le flou d'un détail de la taille d'une plaque d'immatriculation, passe encore. Une fois la photo réduite à 1 280 px par WhatsApp, ces détails ont aussi disparu des copies authentiques, donc on ne peut pas les distinguer. Sur une copie sans perte (PNG), tout est détecté.
+- **L'EXIF est une entrée** : les preuves de date et de lieu prouvent ce que dit l'EXIF signé, pas que c'est vrai. On rejette seulement une date impossible (jour de prise de vue postérieur à l'ancrage).
+- **Pas de révocation rétroactive** : si la clé d'un appareil est volée, les photos forgées avant la révocation restent 🟢.
 - **Cérémonie ZK** : une seule contribution locale pour la phase 2. Suffisant pour une démo, pas pour la production.
 - **Le pHash a besoin d'un index hors chaîne** : XRPL ne sait pas chercher « l'image la plus ressemblante ».
 - Le reste est dans [`security-review.md`](../security-review.md).

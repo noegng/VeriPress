@@ -15,7 +15,7 @@ Record of the team's design sessions (structured question-and-answer sessions wi
 | 5 | Anchor format | Payment of 1 drop + Memo `veripress/v1` | Kept, extended for the anonymous, passkey and batch modes |
 | 6 | Front end | A single page served by FastAPI; Merkle tree ↔ image views as an option | Done, views included |
 | 7 | WhatsApp during the demo | Image prepared in advance, plus a backup video: the venue network is unreliable | Kept |
-| 8 | Where to use test-driven development | Only on Merkle trees / redaction proofs and the final verdict rules | Kept; ~267 tests in the end |
+| 8 | Where to use test-driven development | Only on Merkle trees / redaction proofs and the final verdict rules | Kept; ~290 tests in the end |
 | 9 | Work split | Dev A: trust and verification (signature, pipeline, verdict, store, watermark). Dev B: registry and interface (XRPL, API, page, visualisations) | Kept |
 | 10 | Contracts before coding | `ledger.py` with a `FakeLedger`, and `interfaces.md`, written before splitting up | Kept |
 | 11 | Git | Branches `dev-a/*` / `dev-b/*`, each developer writes only to their own files | Kept; pull requests from Friday afternoon |
@@ -91,3 +91,4 @@ Inspired by Apple's *Reference Image* design, but anchored on a public ledger:
 | RAW negative → reference JPEG | `op = develop`: the device signs its RAW, then its own JPEG development with the RAW as parent; 🟢 only if both are signed by the same named device |
 | Hybrid post-quantum signature | Ed25519 + **ML-DSA-87** (FIPS 204), key attested by the registry in the Credential URI; once declared in a manifest, the ML-DSA signature is mandatory (no downgrade); never in anonymous mode |
 | Security review | One review per side (signature / pipeline, then XRPL / API), see [`security-review.md`](security-review.md) |
+| Adversarial review (night of 20–21 Nov) | Attack our own system for real, then fix what passes, test first: colour and detail in the robust features (parameters in the signed manifest, first records still verify), lossless-copy rule, every candidate record verified, ML-DSA required when attested at anchor time, impossible capture dates rejected, stricter redaction in lossless copies. Detail: [`security-review.md`](security-review.md#adversarial-review-night-of-2021-nov) |
