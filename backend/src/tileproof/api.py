@@ -24,7 +24,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from PIL import Image
-from . import pipeline, watermark, zk
+from . import metadata, pipeline, watermark, zk
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
 from .signing import keys_dir
 from .store import Store
@@ -105,6 +105,12 @@ app.state.store = Store(os.environ.get("TILEPROOF_STORE", BACKEND / "store"))
 
 
 async def read_image(upload: UploadFile) -> np.ndarray:
+    return (await read_upload(upload))[1]
+
+
+async def read_upload(upload: UploadFile) -> tuple[bytes, np.ndarray]:
+    """(raw bytes, decoded sRGB pixels). The raw bytes are needed to sign: they carry the EXIF
+    capture time + GPS that ZK B commits to (the decoded pixels have no metadata)."""
     data = await upload.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
         raise HTTPException(413, "image too large (max 100 MB)")
@@ -117,7 +123,7 @@ async def read_image(upload: UploadFile) -> np.ndarray:
         raise HTTPException(400, f"not a readable image: {e}") from e
     if rgb.shape[0] * rgb.shape[1] > MAX_PIXELS:
         raise HTTPException(413, "image too large (max 40 MP)")
-    return rgb
+    return data, rgb
 
 
 @app.get("/")
@@ -173,10 +179,15 @@ async def sign(
     if parent and not PARENT.match(parent):
         raise HTTPException(422, "parent must be a tx hash")
     anon = (anonymous or "").strip().lower() in ("1", "true", "on")
-    rgb = await read_image(image)
+    data, rgb = await read_upload(image)
+    # ZK B: capture time + GPS from the file's EXIF are committed in the signed manifest and
+    # only proven as "day" / "~10 km area" claims. The published PNG carries no EXIF.
+    exif = await run_in_threadpool(metadata.exif_from_upload, data)
     try:
         result, _png = await run_in_threadpool(
-            lambda: pipeline.sign_image(rgb, signer, app.state.ledger, app.state.store, parent, anonymous=anon)
+            lambda: pipeline.sign_image(
+                rgb, signer, app.state.ledger, app.state.store, parent, anonymous=anon, exif=exif
+            )
         )
     except FileNotFoundError as e:  # keys/ missing
         raise HTTPException(503, f"signing key missing — run scripts/setup_testnet.py ({e.filename})") from e
