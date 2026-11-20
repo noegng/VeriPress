@@ -226,3 +226,51 @@ def test_exif_of_the_upload_gives_proven_day_and_area_claims(client):
     assert sorted(c["kind"] for c in claims) == ["area", "day"]
     assert all(c["proof_ok"] for c in claims)
     assert "20 Nov 2026" in next(c["label"] for c in claims if c["kind"] == "day")
+
+
+def test_public_link_page_and_json(client, signed):
+    """/v/<id>: server-rendered page whose social preview tags already hold the verdict and an
+    absolute thumbnail URL; /api/entry/<id>: the verification JSON of the stored image."""
+    import html as htmllib
+    import re
+
+    body, _ = signed
+    tx = body["tx_hash"]
+    j = client.get(f"/api/entry/{tx.lower()}").json()
+    assert j["verdict"] == "real" and j["entry_id"] == tx
+
+    r = client.get(f"/v/{tx.lower()}")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    page = r.text
+    meta = dict(re.findall(r'<meta property="(og:[a-z]+)" content="([^"]*)"', page))
+    assert "Real" in htmllib.unescape(meta["og:title"])
+    assert meta["og:image"] == f"http://testserver/api/files/{tx}.png"
+    assert meta["og:url"] == f"http://testserver/v/{tx}"
+    assert "__" not in "".join(meta.values())  # every template marker was filled
+    embedded = re.search(r'<script id="report" type="application/json">(.*?)</script>', page, re.S).group(1)
+    assert json.loads(embedded)["verdict"] == "real"
+
+
+def test_public_link_unknown_or_bad_ids(client):
+    assert client.get(f"/v/{'AB' * 32}").status_code == 404
+    assert client.get(f"/api/entry/{'AB' * 32}").status_code == 404
+    assert client.get("/v/not-hex").status_code == 404
+    assert client.get("/api/entry/not-hex").status_code == 422
+
+
+def test_public_page_escapes_a_hostile_report(client, monkeypatch):
+    """A reason containing markup must neither close the embedded JSON <script> nor break out
+    of the meta attributes."""
+    import tileproof.api as api
+
+    evil = '"><script>alert(1)</script>'
+
+    class Report:
+        def to_json(self, heatmap=None):
+            return {"verdict": "edited", "reason": evil, "anchor": None, "meta_claims": []}
+
+    monkeypatch.setattr(api.pipeline, "verify_stored", lambda *a: (Report(), None))
+    page = client.get(f"/v/{'CD' * 32}").text
+    assert "<script>alert(1)</script>" not in page
+    assert "&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in page  # meta description, escaped
+    assert "\\u003cscript>alert(1)\\u003c/script>" in page  # embedded JSON, cannot close the tag

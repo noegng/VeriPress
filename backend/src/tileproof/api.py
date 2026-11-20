@@ -9,6 +9,7 @@ are blocking, so they run in the threadpool to keep the event loop responsive.
 
 from __future__ import annotations
 
+import html
 import io
 import json
 import logging
@@ -17,13 +18,15 @@ import re
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
+
 from . import metadata, pipeline, watermark, zk
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
 from .signing import keys_dir
@@ -164,6 +167,70 @@ def files(name: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(404)
     return FileResponse(path, media_type="image/png", filename=f"tileproof-{entry_id[:12]}.png")
+
+
+async def _verify_stored(entry_id: str) -> dict:
+    try:
+        report, heatmap = await run_in_threadpool(
+            pipeline.verify_stored, entry_id, app.state.ledger, app.state.store
+        )
+    except KeyError as e:
+        raise HTTPException(404, "unknown entry") from e
+    return report.to_json(heatmap)
+
+
+@app.get("/api/entry/{entry_id}")
+async def entry(entry_id: str) -> dict:
+    """/api/verify's JSON, computed on the published image kept in the store."""
+    return await _verify_stored(norm_entry_id(entry_id))
+
+
+SHARE_TITLES = {
+    "real": "🟢 Real — provenance verified on XRPL",
+    "edited": "🟠 Edited since it was signed",
+    "ai": "🔵 AI-generated (declared and signed)",
+    "unknown": "⚪ No verifiable provenance",
+}
+
+
+def _share_text(r: dict) -> tuple[str, str]:
+    """(title, description) of the social preview, from the verification report."""
+    title = SHARE_TITLES.get(r["verdict"], SHARE_TITLES["unknown"])
+    if r["verdict"] == "real" and r.get("anonymous"):
+        title = "🟢 Real — accredited device (anonymous), verified on XRPL"
+    parts = [r.get("reason") or ""]
+    parts += [c["label"] for c in r.get("meta_claims") or [] if c.get("proof_ok")]
+    if r.get("anchor"):
+        when = datetime.fromtimestamp(r["anchor"]["timestamp"], timezone.utc).strftime("%d %b %Y %H:%M UTC")
+        parts.append(f"anchored {when}")
+    return title, " · ".join(p for p in parts if p)
+
+
+@app.get("/v/{entry_id}", response_class=HTMLResponse)
+async def public_view(entry_id: str, request: Request) -> HTMLResponse:
+    """Public, read-only verification page. Rendered on the server: social-network crawlers do
+    not run JavaScript, so the Open Graph / Twitter tags must already hold the verdict and the
+    thumbnail. The report is embedded once, so a visit costs a single verification."""
+    if not ENTRY_ID.match(entry_id):
+        raise HTTPException(404)
+    entry_id = norm_entry_id(entry_id)
+    r = await _verify_stored(entry_id)
+    title, description = _share_text(r)
+    image_path = f"/api/files/{entry_id}.png"
+    base = str(request.base_url).rstrip("/")
+    # JSON inside <script>: escape "<" so no value can close the tag ("</script>").
+    report_json = json.dumps(r, separators=(",", ":")).replace("<", "\\u003c")
+    page = (STATIC / "view.html").read_text()
+    for marker, value in (
+        ("__TITLE__", html.escape(title)),
+        ("__DESCRIPTION__", html.escape(description)),
+        ("__IMAGE_URL__", html.escape(base + image_path)),
+        ("__PAGE_URL__", html.escape(f"{base}/v/{entry_id}")),
+        ("__IMAGE_PATH__", html.escape(image_path)),
+        ("__REPORT_JSON__", report_json),
+    ):
+        page = page.replace(marker, value)
+    return HTMLResponse(page)
 
 
 @app.post("/api/sign")
