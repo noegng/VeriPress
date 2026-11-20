@@ -61,6 +61,8 @@
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 10px; }
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
   .err { color: #c92a2a; margin-top: 10px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
+  canvas.overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -3px; margin-right: 6px; }
   @keyframes s { to { transform: rotate(360deg); } }
   @media (max-width: 480px) { .counts { grid-template-columns: repeat(2, 1fr); } .badge strong { font-size: 22px; } }
@@ -122,6 +124,7 @@
       <div class="stage" id="verifyStage">
         <img id="verifyPreview" alt="Verified image">
         <img class="overlay" id="heatmap" alt="" hidden>
+        <canvas class="overlay" id="redactCanvas" hidden></canvas>
       </div>
       <div class="row" id="heatmapCtl" hidden>
         <label><input type="checkbox" id="heatmapToggle" checked> Show tile heatmap</label>
@@ -134,6 +137,18 @@
       </div>
       <div class="counts" id="counts"></div>
       <dl id="verifyInfo"></dl>
+      <div class="row" id="redactCtl" hidden>
+        <button class="btn ghost" id="redactStart">✏️ Redact areas</button>
+      </div>
+      <div id="redactPanel" hidden>
+        <p class="hint">Drag on the image to black out areas (e.g. faces). The rest stays verifiable.</p>
+        <div class="row">
+          <button class="btn" id="redactApply" disabled>Redact &amp; re-verify</button>
+          <button class="btn ghost" id="redactClear">Clear</button>
+          <a class="btn ghost" id="redactDownload" download hidden>⬇ Download redacted</a>
+        </div>
+        <div class="err" id="redactErr"></div>
+      </div>
     </div>
   </section>
 </main>
@@ -258,9 +273,68 @@ function showReport(r) {
     ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
     ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows}`)],
   ]);
+  lastEntry = r.verdict !== "unknown" ? r.entry_id : null;
+  stopRedact();
+  $("redactCtl").hidden = !lastEntry;
   $("verifyResult").hidden = false;
   $("verifyResult").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// Redaction (option): draw boxes in displayed coords, send them in image pixel coords.
+let lastEntry = null, boxes = [], drag = null;
+const cv = $("redactCanvas");
+function drawBoxes() {
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "rgba(0,0,0,.85)"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * devicePixelRatio;
+  for (const b of drag ? [...boxes, drag] : boxes) {
+    ctx.fillRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+    ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+  }
+  $("redactApply").disabled = boxes.length === 0;
+}
+function canvasPoint(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height];
+}
+function norm([x0, y0, x1, y1]) { return [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]; }
+cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); const p = canvasPoint(e); drag = [...p, ...p]; });
+cv.addEventListener("pointermove", (e) => { if (!drag) return; const p = canvasPoint(e); drag[2] = p[0]; drag[3] = p[1]; drawBoxes(); });
+cv.addEventListener("pointerup", () => {
+  if (!drag) return;
+  const b = norm(drag); drag = null;
+  if (b[2] - b[0] > 4 && b[3] - b[1] > 4) boxes.push(b);
+  drawBoxes();
+});
+function stopRedact() {
+  boxes = []; drag = null; cv.hidden = true; $("redactPanel").hidden = true;
+  $("redactDownload").hidden = true; $("redactErr").textContent = "";
+}
+$("redactStart").addEventListener("click", () => {
+  const img = $("verifyPreview");
+  cv.width = img.clientWidth * devicePixelRatio; cv.height = img.clientHeight * devicePixelRatio;
+  $("heatmapToggle").checked = false; applyHeatmapToggle();
+  boxes = []; cv.hidden = false; $("redactPanel").hidden = false; drawBoxes();
+});
+$("redactClear").addEventListener("click", () => { boxes = []; drawBoxes(); });
+$("redactApply").addEventListener("click", async () => {
+  const img = $("verifyPreview");
+  const sx = img.naturalWidth / cv.width, sy = img.naturalHeight / cv.height;
+  const px = boxes.map((b) => [Math.floor(b[0] * sx), Math.floor(b[1] * sy), Math.ceil(b[2] * sx), Math.ceil(b[3] * sy)]);
+  const fd = new FormData();
+  fd.append("image", verifyFile); fd.append("entry_id", lastEntry); fd.append("boxes", JSON.stringify(px));
+  const res = await post("/api/redact", fd, $("redactApply"), $("redactErr"));
+  if (!res) return;
+  const dl = $("redactDownload");
+  dl.href = safeUrl(res.image_url); dl.hidden = false;
+  // Re-verify the redacted image: redacted tiles should come back black but authenticated.
+  const blob = await fetch(res.image_url).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
+  if (!blob) { $("redactErr").textContent = "Redacted entry created; image not available yet (mock mode)."; return; }
+  verifyFile = new File([blob], "redacted.png", { type: "image/png" });
+  img.src = URL.createObjectURL(blob);
+  $("txInput").value = res.entry_id;
+  $("verifyBtn").click();
+});
 </script>
 </body>
 </html>
