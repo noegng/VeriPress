@@ -155,7 +155,7 @@ def _anonymous_registry(signer: Signer) -> tuple[dict, list[list[str]], int]:
 
 def sign_image(
     rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None,
-    anonymous: bool = False,
+    anonymous: bool = False, wait: bool = True,
 ) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
     `parent`: tx hash of the signed version this image was edited from (version chain).
@@ -181,9 +181,9 @@ def sign_image(
     bundle = None
     if anonymous:
         bundle = zk.prove_device(bjj["sk"], pks, index, digest)
-        anchor = ledger.anchor_anonymous(digest, bundle["public"][0], _bundle_hash(bundle))
+        anchor = ledger.anchor_anonymous(digest, bundle["public"][0], _bundle_hash(bundle), wait=wait)
     else:
-        anchor = ledger.anchor(digest, key.sign(digest), key.public_key)
+        anchor = ledger.anchor(digest, key.sign(digest), key.public_key, wait=wait)
     png = _png(rgb)
     store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, disclosure, phash(rgb)), png)
     if bundle is not None:
@@ -237,6 +237,12 @@ def verify_image(
     else:
         sig_ok = verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
         credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
+    # Non-retroactive revocation: the credential was valid at anchor time but has been revoked since.
+    revoked_at = None
+    if not anchor.anonymous and credential is not None:
+        revoked_at = ledger.credential_revoked_at(anchor.pubkey)
+        if revoked_at is not None and revoked_at <= anchor.timestamp:
+            revoked_at = None
     tiles = verify(rgb, manifest, entry.disclosure)
     reason = ""
     if (
@@ -290,16 +296,37 @@ def verify_image(
         reason = f"{who}; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
             reason += f", {c['redacted']} redacted"
+        if revoked_at is not None:
+            reason += f"; device revoked since {_utc(revoked_at)}, after this photo was anchored"
     else:
         verdict = FinalVerdict.UNKNOWN
         reason = "Signer has no valid credential (never issued or revoked)"
+    if not anchor.validated:
+        reason = f"Anchor pending validation on the ledger (provisional verdict); {reason}"
     history = _history(entry.tx_hash, ledger, store)
     report = Report(
         verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history,
-        anonymous=anchor.anonymous, zk=zk_check,
+        anonymous=anchor.anonymous, zk=zk_check, credential_revoked_at=revoked_at,
+        pending=not anchor.validated,
     )
     hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
     return report, hm
+
+
+def verify_stored(entry_id: str, ledger: Ledger, store: Store) -> tuple[Report, bytes | None]:
+    """Verify the published image kept in the store for `entry_id` (public link /v/<tx>).
+    Raises KeyError for an unknown entry."""
+    path = store.image_path(entry_id)
+    if store.get(entry_id) is None or not path.exists():
+        raise KeyError(entry_id)
+    rgb = np.asarray(Image.open(path).convert("RGB"))
+    return verify_image(rgb, ledger, store, entry_id=entry_id)
+
+
+def _utc(ts: int) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _history(tx_hash: str | None, ledger: Ledger, store: Store, max_depth: int = 20) -> list[dict]:
