@@ -146,6 +146,41 @@ class XrplLedger:
         self.client = JsonRpcClient(node_url or os.environ.get("TILEPROOF_XRPL_URL") or DEFAULT_NODE)
         self.registry = json.loads((keys / "registry.json").read_text())["address"]
         self.wallet = Wallet.from_seed(json.loads((keys / "anchor.json").read_text())["seed"])
+        self._history_cache: dict[str, tuple[float, list[dict]]] = {}
+
+    def _request(self, req):
+        """Read-only request with one retry: the public Testnet node sometimes drops a
+        connection (ConnectTimeout seen during tests). Never used for submissions, where a
+        retry could anchor twice."""
+        try:
+            return self.client.request(req)
+        except Exception:  # noqa: BLE001 — httpx / websockets transport errors
+            time.sleep(0.5)
+            return self.client.request(req)
+
+    def _history(self, address: str) -> list[dict]:
+        """Validated account history, oldest first. Cached HISTORY_TTL seconds: enough to
+        share one download between the calls of a single verification, short enough for a
+        revocation made during the demo to show up at once."""
+        from xrpl.models.requests import AccountTx
+
+        hit = self._history_cache.get(address)
+        if hit and time.monotonic() - hit[0] < HISTORY_TTL:
+            return hit[1]
+        entries: list[dict] = []
+        marker = None
+        while True:
+            resp = self._request(AccountTx(account=address, forward=True, limit=200, marker=marker))
+            if not resp.is_successful():
+                if resp.result.get("error") == "actNotFound":  # never funded: no history
+                    break
+                raise RuntimeError(f"XRPL account history unavailable: {resp.result.get('error')}")
+            entries += resp.result.get("transactions", [])
+            marker = resp.result.get("marker")
+            if not marker:
+                break
+        self._history_cache[address] = (time.monotonic(), entries)
+        return entries
 
     def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
         # wait=False (fast anchoring) lands with phase 2 task 5; until then it still waits,
@@ -172,7 +207,7 @@ class XrplLedger:
         from xrpl.models.requests import Tx
         from xrpl.utils import hex_to_str
 
-        resp = self.client.request(Tx(transaction=tx_hash))
+        resp = self._request(Tx(transaction=tx_hash))
         if not resp.is_successful() or not resp.result.get("validated"):
             return None
         r = resp.result
@@ -205,9 +240,15 @@ class XrplLedger:
             subject = derive_classic_address(pubkey)
         except Exception:
             return None
+        if at_time is not None:
+            # Non-retroactive: was the credential valid at that instant? (account history)
+            for ctype, intervals in self._intervals(subject).items():
+                if any(_valid_at(iv, at_time) for iv in intervals):
+                    return ctype
+            return None
         now = posix_to_ripple_time(int(time.time()))
         for ctype in CredentialType:
-            resp = self.client.request(
+            resp = self._request(
                 LedgerEntry(
                     credential=Credential(subject=subject, issuer=self.registry, credential_type=str_to_hex(ctype.value)),
                     ledger_index="validated",
@@ -221,19 +262,92 @@ class XrplLedger:
                 return ctype
         return None
 
-    # --- Phase 2: implemented by the Dev B feature PRs (tasks 1, 2, 6 in tasks-dev-b.md) ---
+    def _intervals(self, subject: str) -> dict[CredentialType, list[Interval]]:
+        """Validity intervals of each credential type issued by the registry to `subject`.
+        Read from the SUBJECT's history: the Credential object sits in both the issuer's and
+        the subject's owner directories, so every Create/Accept/Delete shows up there too,
+        without the hundreds of anchor payments that pile up on the registry account."""
+        from xrpl.utils import str_to_hex
+
+        entries = self._history(subject)
+        return {
+            ctype: _credential_intervals(entries, subject, self.registry, str_to_hex(ctype.value))
+            for ctype in CredentialType
+        }
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        from xrpl.core.keypairs import derive_classic_address
+
+        try:
+            subject = derive_classic_address(pubkey)
+        except Exception:
+            return None
+        return _revoked_at(self._intervals(subject).values(), int(time.time()))
+
+    # --- Phase 2: implemented by the Dev B feature PRs (tasks 1, 6 in tasks-dev-b.md) ---
 
     def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
         raise NotImplementedError("phase 2 task 1 (anonymous registry)")
-
-    def credential_revoked_at(self, pubkey: str) -> int | None:
-        raise NotImplementedError("phase 2 task 2 (non-retroactive revocation)")
 
     def credential_passkey(self, pubkey: str) -> str | None:
         raise NotImplementedError("phase 2 task 6 (passkey)")
 
     def registry_root_at(self, at_time: int) -> str | None:
         raise NotImplementedError("phase 2 task 1 (anonymous registry)")
+
+
+HISTORY_TTL = 3.0  # seconds
+
+# (start, end, expiration): valid on [start, end) and before expiration; end/expiration None = open.
+Interval = tuple[int, int | None, int | None]
+
+
+def _credential_intervals(entries: list[dict], subject: str, issuer: str, ctype_hex: str) -> list[Interval]:
+    """Validity intervals of one credential (subject, issuer, type) from a chronological account
+    history (account_tx entries, API v1 or v2). A credential counts from its CredentialAccept
+    (an unaccepted credential is not valid) until its CredentialDelete; a later
+    CredentialCreate + CredentialAccept opens a new interval. Only validated, successful txs."""
+    from xrpl.utils import ripple_time_to_posix
+
+    out: list[Interval] = []
+    created = False
+    start: int | None = None
+    expiration: int | None = None
+    for e in entries:
+        tx = e.get("tx_json") or e.get("tx") or {}
+        if not e.get("validated", False) or e.get("meta", {}).get("TransactionResult") != "tesSUCCESS":
+            continue
+        if str(tx.get("CredentialType", "")).upper() != ctype_hex.upper():
+            continue
+        kind, account = tx.get("TransactionType"), tx.get("Account")
+        if kind == "CredentialCreate" and account == issuer and tx.get("Subject") == subject:
+            created = True
+            expiration = ripple_time_to_posix(tx["Expiration"]) if "Expiration" in tx else None
+        elif kind == "CredentialAccept" and account == subject and tx.get("Issuer") == issuer and created:
+            start = _close_time(e)
+        elif kind == "CredentialDelete" and tx.get("Subject", account) == subject and tx.get("Issuer", account) == issuer:
+            # Either side may delete; Subject / Issuer default to the sending account.
+            if start is not None:
+                out.append((start, _close_time(e), expiration))
+            created, start, expiration = False, None, None
+    if start is not None:
+        out.append((start, None, expiration))
+    return out
+
+
+def _valid_at(interval: Interval, t: int) -> bool:
+    start, end, expiration = interval
+    return start <= t and (end is None or t < end) and (expiration is None or t < expiration)
+
+
+def _revoked_at(intervals_by_type, now: int) -> int | None:
+    """Time of the CredentialDelete that ended the most recent credential, if no credential is
+    valid now. An expired (but not deleted) credential is not a revocation: None."""
+    latest = [ivs[-1] for ivs in intervals_by_type if ivs]
+    if not latest or any(_valid_at(iv, now) for iv in latest):
+        return None
+    ends = [iv[1] for iv in latest if iv[1] is not None]
+    return max(ends) if ends else None
 
 
 def _close_time(result: dict) -> int:
