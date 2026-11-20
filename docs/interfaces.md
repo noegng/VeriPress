@@ -121,7 +121,7 @@ Script options: `--fresh` (new accounts), `--revoke device|ai`, `--reissue devic
 
 | Route | Purpose |
 |---|---|
-| `GET /` | The web page (Sign / Verify tabs) |
+| `GET /` | The web page (Examine / Certify tabs) |
 | `GET /api/health` | `{ok, ledger, watermark, watermark_ready}` |
 | `POST /api/preview` | Browser-displayable JPEG of an upload the browser cannot render (RAW, HEIC on Chrome) |
 | `GET /api/files/{entry_id}.png` | The published image |
@@ -133,6 +133,8 @@ Script options: `--fresh` (new accounts), `--revoke device|ai`, `--reissue devic
 | `POST /api/redact` | Create a redacted variant |
 | `GET /api/anchor/{tx_hash}` | Anchor status `{tx_hash, validated, timestamp, explorer_url}` (polled after fast anchoring) |
 | `GET /api/entry/{entry_id}` | `/api/verify` JSON computed on the stored image |
+| `GET /api/proof/{entry_id}` | Public material for the in-browser proof replay: `{tx_hash, manifest, disclosure}` (`manifest` = the canonical bytes whose SHA-256 is the anchored digest) |
+| `GET /api/demo`, `GET /api/demo/{name}` | The pitch specimens prepared by `cli prepare-demo` (`demo/signed/`, closed list) |
 | `GET /v/{entry_id}` | Public read-only verification page, with social preview tags |
 
 ### `POST /api/sign`

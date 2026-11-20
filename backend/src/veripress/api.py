@@ -158,6 +158,44 @@ def assets(name: str) -> FileResponse:
     return FileResponse(STATIC / name, media_type=ASSETS[name])
 
 
+# --- Demo specimens and proof material ----------------------------------------------------------
+# Specimens: the pitch images prepared by `cli prepare-demo` (demo/signed), offered on the page
+# so a verdict can be shown in one click. A closed list: nothing else under demo/ is served.
+DEMO_SIGNED = Path(__file__).resolve().parents[3] / "demo" / "signed"
+SPECIMENS = {
+    "1_signed.png": "Signed original",
+    "2_edited.jpg": "Edited copy",
+    "3_whatsapp_sim.jpg": "After WhatsApp",
+    "4_redacted.png": "Redacted",
+    "6_ai_whatsapp_sim.jpg": "AI image",
+    "5_copied_watermark.jpg": "Copied watermark",
+}
+
+
+@app.get("/api/demo")
+def demo_list() -> list:
+    return [[name, label] for name, label in SPECIMENS.items() if (DEMO_SIGNED / name).is_file()]
+
+
+@app.get("/api/demo/{name}")
+def demo_file(name: str) -> FileResponse:
+    if name not in SPECIMENS or not (DEMO_SIGNED / name).is_file():
+        raise HTTPException(404)
+    return FileResponse(DEMO_SIGNED / name)
+
+
+@app.get("/api/proof/{entry_id}")
+def proof_material(entry_id: str) -> dict:
+    """Public material of a record, for the in-browser proof replay: the canonical manifest bytes
+    (the browser hashes them itself and compares with the XRPL memo) and the tile disclosure."""
+    eid = norm_entry_id(entry_id)
+    entry = app.state.store.get(eid) if eid else None
+    if entry is None:
+        raise HTTPException(404, "unknown entry")
+    return {"tx_hash": entry.tx_hash, "manifest": entry.manifest.canonical().decode(),
+            "disclosure": entry.disclosure.to_dict()}
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
