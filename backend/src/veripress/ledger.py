@@ -59,6 +59,7 @@ class Anchor:
     registry_root: str = ""  # anonymous mode: registry root used by the proof
     bundle_hash: str = ""  # anonymous / passkey: sha256 hex of the proof bundle kept in store/
     cid: str = ""  # option: IPFS CID of the disclosure
+    batch_size: int = 0  # > 0: a batch anchor (digest = Merkle root of `batch_size` records)
 
 
 class Ledger(Protocol):
@@ -102,6 +103,10 @@ class Ledger(Protocol):
     def registry_root_at(self, at_time: int) -> str | None:
         """Root of the anonymous device registry in force at `at_time` (last one published
         by the registry before that instant), or None."""
+        ...
+
+    def anchor_batch(self, root: str, count: int, wait: bool = True) -> Anchor:
+        """Aggregated anchoring: one tx for the Merkle root of `count` records (memo {"b", "n"})."""
         ...
 
     def latest_validated(self) -> tuple[int, str, int]:
@@ -160,6 +165,11 @@ class FakeLedger:
         h = self._tx_hash(digest, bundle_hash)
         return self._store(Anchor(h, digest, "", pubkey, int(time.time()), f"fake://tx/{h}", validated=wait,
                                   bundle_hash=bundle_hash))
+
+    def anchor_batch(self, root: str, count: int, wait: bool = True) -> Anchor:
+        h = self._tx_hash(root, str(count))
+        return self._store(Anchor(h, root, "", "", int(time.time()), f"fake://tx/{h}", validated=wait,
+                                  batch_size=count))
 
     def validate(self, tx_hash: str) -> None:
         """Tests: the submitted tx makes it into a validated ledger."""

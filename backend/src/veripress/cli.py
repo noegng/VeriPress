@@ -3,6 +3,7 @@
   veripress commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
   veripress verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   veripress redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
+  veripress demo-batch IMG... -o OUT_DIR       -> N photos anchored in one transaction
   veripress demo-raw RAW -o OUT_DIR            -> digital negative -> signed reference JPEG
   veripress demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
   veripress calibrate ORIG_DIR SHARED_DIR -o OUT.json
@@ -115,6 +116,53 @@ def _demo_ledger(out: Path):
     ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
     ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
     return ledger, store
+
+
+def cmd_export_disclosure(a: argparse.Namespace) -> int:
+    from .contentaddr import canonical_json, cid_v1_raw
+    from .store import Store
+
+    entry = Store(a.store).get(a.entry_id)
+    if entry is None:
+        print(f"unknown entry {a.entry_id}", file=sys.stderr)
+        return 1
+    data = canonical_json(entry.disclosure.to_dict())
+    cid = cid_v1_raw(data)
+    if entry.manifest.disclosure_cid and cid != entry.manifest.disclosure_cid:
+        print(f"warning: stored disclosure {cid} differs from the signed one {entry.manifest.disclosure_cid}"
+              " (redacted variant?)", file=sys.stderr)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{cid}.json").write_bytes(data)
+    print(f"{out / (cid + '.json')}  ({len(data)} bytes)")
+    return 0
+
+
+def cmd_demo_batch(a: argparse.Namespace) -> int:
+    """Aggregated anchoring: sign N photos, anchor them in ONE transaction, verify each."""
+    import io
+
+    import numpy as np
+
+    from .batching import BatchingLedger
+    from .pipeline import sign_image, verify_image
+
+    out = Path(a.out)
+    ledger, store = _demo_ledger(out)
+    batch = BatchingLedger(ledger, store)
+    signed = [sign_image(load_rgb(p), "device", batch, store) for p in a.images]
+    before = len(ledger.anchors)
+    tx = batch.flush()
+    photos = []
+    for path, (res, png) in zip(a.images, signed):
+        report, _ = verify_image(np.asarray(Image.open(io.BytesIO(png)).convert("RGB")), ledger, store,
+                                 entry_id=res.entry_id)
+        photos.append({"file": Path(path).name, "verdict": report.verdict.value, "batch": report.batch})
+        print(f"{Path(path).name:28} {report.verdict.value:8} batch #{report.batch['index']} of {report.batch['size']}")
+    summary = {"batch_tx": tx, "size": len(signed), "transactions": len(ledger.anchors) - before, "photos": photos}
+    _write_json(out / "summary.json", summary)
+    print(f"{len(signed)} photos -> {summary['transactions']} transaction ({tx})")
+    return 0
 
 
 def cmd_demo_raw(a: argparse.Namespace) -> int:
@@ -347,6 +395,17 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("--ai", help="AI-generated image for scenario 6 (default: mirrored photo)")
     dm.add_argument("-o", "--out", required=True)
     dm.set_defaults(fn=cmd_demo)
+
+    ex = sub.add_parser("export-disclosure", help="write an entry's disclosure as <CID>.json, for mirroring")
+    ex.add_argument("entry_id")
+    ex.add_argument("--store", default="store")
+    ex.add_argument("-o", "--out", required=True)
+    ex.set_defaults(fn=cmd_export_disclosure)
+
+    db = sub.add_parser("demo-batch", help="sign N photos, anchor them in one transaction")
+    db.add_argument("images", nargs="+")
+    db.add_argument("-o", "--out", required=True)
+    db.set_defaults(fn=cmd_demo_batch)
 
     dr = sub.add_parser("demo-raw", help="RAW negative -> signed reference JPEG (Apple Reference Image, on XRPL)")
     dr.add_argument("image", help="camera RAW / DNG (or any image)")

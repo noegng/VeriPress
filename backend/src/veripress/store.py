@@ -13,10 +13,19 @@ entry_id == tx_hash for an original; "<tx_hash>-r<n>" for a redacted variant
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .commitment import Disclosure, Manifest
+
+
+ENTRY_ID = re.compile(r"^[0-9A-Fa-f]{16,64}(-r\d+)?$")  # tx hash, or tx hash + redaction variant
+
+
+def valid_id(entry_id: str) -> bool:
+    """Entry ids also come from signed manifests (parent): never let one escape the store."""
+    return isinstance(entry_id, str) and bool(ENTRY_ID.match(entry_id))
 
 
 @dataclass
@@ -48,6 +57,8 @@ class Store:
             (d / "image.png").write_bytes(image_png)
 
     def get(self, entry_id: str) -> Entry | None:
+        if not valid_id(entry_id):
+            return None
         p = self.root / entry_id / "entry.json"
         if not p.exists():
             return None
@@ -65,6 +76,8 @@ class Store:
         (self.root / entry_id / "bundle.json").write_text(json.dumps(bundle, sort_keys=True, separators=(",", ":")))
 
     def get_bundle(self, entry_id: str) -> dict | None:
+        if not valid_id(entry_id):
+            return None
         p = self.root / entry_id / "bundle.json"
         return json.loads(p.read_text()) if p.exists() else None
 
@@ -73,6 +86,8 @@ class Store:
         (self.root / entry_id / "meta.json").write_text(json.dumps(claims, separators=(",", ":")))
 
     def get_meta(self, entry_id: str) -> list[dict]:
+        if not valid_id(entry_id):
+            return []
         p = self.root / entry_id / "meta.json"
         try:
             data = json.loads(p.read_text()) if p.exists() else []
@@ -80,7 +95,25 @@ class Store:
             return []
         return data if isinstance(data, list) else []
 
+    def put_receipt(self, entry_id: str, receipt: dict) -> None:
+        """Aggregated anchoring: {batch_tx, index, leaf, proof} or {queued: leaf} (untrusted)."""
+        if valid_id(entry_id):
+            (self.root / entry_id).mkdir(parents=True, exist_ok=True)
+            (self.root / entry_id / "receipt.json").write_text(json.dumps(receipt, separators=(",", ":")))
+
+    def get_receipt(self, entry_id: str) -> dict | None:
+        p = self.root / entry_id / "receipt.json" if valid_id(entry_id) else None
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
     def image_path(self, entry_id: str) -> Path:
+        if not valid_id(entry_id):
+            return self.root / "_invalid_id_" / "image.png"  # never exists
         return self.root / entry_id / "image.png"
 
     def find_by_watermark(self, wm_id: str, phash: int) -> Entry | None:

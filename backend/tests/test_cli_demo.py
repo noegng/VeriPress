@@ -64,3 +64,18 @@ def test_demo_raw_plays_negative_then_reference_jpeg(tmp_path, monkeypatch):
     }
     assert summary["2_reference_jpeg"]["history"] == ["develop", "capture"]
     assert (out / "2_reference_jpeg.jpg").exists()
+
+
+def test_demo_batch_anchors_many_photos_in_one_transaction(tmp_path, monkeypatch):
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")
+    paths = []
+    for s in range(4):
+        p = tmp_path / f"p{s}.png"
+        Image.fromarray(photo_like(seed=s)).save(p)
+        paths.append(str(p))
+    out = tmp_path / "batch"
+    assert main(["demo-batch", *paths, "-o", str(out)]) == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["transactions"] == 1 and summary["size"] == 4
+    assert [p["verdict"] for p in summary["photos"]] == ["real"] * 4
+    assert {p["batch"]["tx_hash"] for p in summary["photos"]} == {summary["batch_tx"]}
