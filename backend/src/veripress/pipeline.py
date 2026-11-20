@@ -37,7 +37,7 @@ from .tiling import Grid
 from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
-from . import metadata, watermark, zk
+from . import c2pa_embed, metadata, watermark, zk
 from .signing import keys_dir, load_key, verify_signature
 from .store import Entry, Store
 
@@ -191,6 +191,8 @@ def sign_image(
     else:
         anchor = ledger.anchor(digest, key.sign(digest), key.public_key, wait=wait)
     png = _png(rgb)
+    if c2pa_embed.enabled():  # Content Credentials pointing to the anchor (metadata only, same pixels)
+        png = c2pa_embed.embed(png, anchor.tx_hash, digest, manifest.op, anchor.explorer_url)
     store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, disclosure, phash(rgb)), png)
     if bundle is not None:
         store.put_bundle(anchor.tx_hash, bundle)
