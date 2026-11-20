@@ -249,3 +249,12 @@ N enregistrements signés, **une** transaction XRPL. La signature de chaque phot
 ## C2PA à la vérification (Dev B, accord de Dev A)
 
 `/api/verify` : nouvelle clé `"c2pa"`, lue sur les **octets** envoyés (`c2pa_embed.read`), jamais sur les pixels : `null` (pas de manifeste, par exemple après WhatsApp) ou `{"tx_hash", "manifest_digest", "explorer", "source_type", "state", "signer_trusted", "matches_anchor"}`. `matches_anchor` vaut `true` si le manifeste désigne l'ancrage (ou l'entrée) retrouvé par VeriPress. C'est **une information, pas une preuve** (`security-review.md`) : le verdict n'en dépend pas, et la page l'affiche avec ℹ️.
+
+## Signature hybride post-quantique (Ed25519 + ML-DSA-87)
+
+Comme la signature hybride ML-DSA-87 + RSA d'Apple Reference Image, avec ML-DSA natif dans `cryptography` ≥ 44 (FIPS 204).
+- Clés : `keys/<device|ai>.json["mldsa"] = {"public_key": hex brut (2 592 o), "private_pem": PKCS8 PEM}`.
+- Attestation par le registre : l'`URI` du Credential porte `mldsa87:sha256:<hex>`, séparé par `;` d'un éventuel `passkey:sha256:<hex>`, par exemple `passkey:sha256:ab…;mldsa87:sha256:cd…`.
+- Ledger : `credential_pq(pubkey) -> sha256 hex | None` (Dev B pour `XrplLedger`).
+- Signature : si la clé ML-DSA de l'appareil est **attestée**, le manifeste signé contient `pq_pubkey_sha256`, et `store/<id>/pq.json = {alg: "ML-DSA-87", public_key, signature}` (4,6 Ko : trop gros pour le Memo de 1 Ko). Jamais en mode anonyme (la clé identifierait l'appareil). Clé non attestée → signature Ed25519 seule.
+- Vérification : un manifeste qui déclare la clé **exige** une signature ML-DSA valide et la clé attestée, sinon `unknown` (pas de rétrogradation). Nouvelle clé JSON `"post_quantum": {"alg", "signature_ok", "attested"} | null`. Le motif ajoute « hybrid post-quantum signature (Ed25519 + ML-DSA-87) ».

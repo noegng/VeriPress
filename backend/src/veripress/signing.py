@@ -104,3 +104,29 @@ def verify_webauthn(assertion: dict, digest: str, passkey_sec1_hex: str) -> None
         key.verify(sig, auth + hashlib.sha256(cdj).digest(), ec.ECDSA(hashes.SHA256()))
     except InvalidSignature as e:
         raise ValueError("WebAuthn signature does not verify") from e
+
+
+# ---------------------------------------------------------------- post-quantum (ML-DSA-87, FIPS 204)
+
+PQ_ALG = "ML-DSA-87"
+
+
+def load_pq_key(name: str):
+    """(ML-DSA-87 private key, raw public key hex) from keys/<name>.json["mldsa"], or None."""
+    from cryptography.hazmat.primitives import serialization
+
+    data = json.loads((keys_dir() / f"{name}.json").read_text()).get("mldsa")
+    if not data:
+        return None
+    return serialization.load_pem_private_key(data["private_pem"].encode(), None), str(data["public_key"]).lower()
+
+
+def verify_pq(digest: str, signature_hex: str, public_key_hex: str) -> bool:
+    from cryptography.hazmat.primitives.asymmetric import mldsa
+
+    try:
+        pub = mldsa.MLDSA87PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+        pub.verify(bytes.fromhex(signature_hex), bytes.fromhex(digest))
+        return True
+    except (InvalidSignature, ValueError, TypeError):
+        return False

@@ -43,7 +43,7 @@ from .ledger import Anchor, CredentialType, Ledger
 from . import c2pa_embed, metadata, watermark, zk
 from .batching import resolve_receipt
 from .contentaddr import canonical_json, cid_v1_raw
-from .signing import keys_dir, load_key, verify_signature, verify_webauthn
+from .signing import PQ_ALG, keys_dir, load_key, load_pq_key, verify_pq, verify_signature, verify_webauthn
 from .store import Entry, Store
 
 Signer = Literal["device", "ai"]  # demo keys in keys/device.json, keys/ai.json (written by Dev B's setup script)
@@ -109,6 +109,7 @@ class Report:
     time_window: dict | None = None  # {"not_before", "not_after", "ledger_index", "t0_ok"}
     disclosure_cid: str | None = None
     batch: dict | None = None  # aggregated anchoring: {"tx_hash", "index", "size"}
+    post_quantum: dict | None = None  # {"alg", "signature_ok", "attested"} when the manifest is hybrid
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
         """Shape: docs/interfaces.md "POST /api/verify"."""
@@ -141,6 +142,7 @@ class Report:
             "time_window": self.time_window,
             "disclosure_cid": self.disclosure_cid,
             "batch": self.batch,
+            "post_quantum": self.post_quantum,
             "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
         }
 
@@ -179,11 +181,13 @@ class _Prepared:
     capture: metadata.Capture | None
     salt: str | None
     created: float = field(default_factory=time.monotonic)
+    pq: dict | None = None  # {"alg", "public_key", "signature"} hybrid post-quantum signature
 
 
 def _prepare(
     rgb: np.ndarray, op: str, signer_pubkey: str, ledger: Ledger | None, store: Store,
     parent: str | None = None, exif: bytes | None = None, anonymous: bool = False, passkey: str | None = None,
+    pq_pubkey_sha256: str | None = None,
 ) -> _Prepared:
     if parent is not None and (store.get(parent) is None or (
             ledger is not None and _fetch_anchor(parent, ledger, store)[0] is None)):
@@ -199,6 +203,7 @@ def _prepare(
     manifest.signer = "" if anonymous else signer_pubkey
     manifest.anonymous = anonymous
     manifest.passkey = passkey
+    manifest.pq_pubkey_sha256 = None if anonymous else pq_pubkey_sha256  # the key would identify the device
     manifest.op = op if op in ("ai_generate", "develop") else ("edit" if parent else "capture")
     manifest.parent = parent
     manifest.t0 = _latest_ledger(ledger)
@@ -217,6 +222,8 @@ def _publish(prep: _Prepared, anchor: Anchor, store: Store, bundle: dict | None 
     store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, prep.disclosure, phash(prep.rgb)), png)
     if bundle is not None:
         store.put_bundle(anchor.tx_hash, bundle)
+    if prep.pq is not None:
+        store.put_pq(anchor.tx_hash, prep.pq)
     claims = []
     if prep.capture:
         cap = prep.capture
@@ -226,6 +233,31 @@ def _publish(prep: _Prepared, anchor: Anchor, store: Store, bundle: dict | None 
         ])
         claims = [{"kind": c.kind, "label": c.label, "proof_ok": True} for c in made]
     return SignResult(anchor.tx_hash, anchor, manifest, claims), png
+
+
+def _pq_material(signer: str, device_pubkey: str, ledger: Ledger | None):
+    """(ML-DSA-87 key, public hex, sha256) if this signer has one AND the registry attests it,
+    else None: until attested we sign classic Ed25519 only (no unverifiable hybrid)."""
+    try:
+        loaded = load_pq_key(signer)
+    except (OSError, ValueError, KeyError):
+        loaded = None
+    if loaded is None or ledger is None:
+        return None
+    key, pub_hex = loaded
+    sha = hashlib.sha256(bytes.fromhex(pub_hex)).hexdigest()
+    try:
+        attested = ledger.credential_pq(device_pubkey) == sha
+    except Exception:  # noqa: BLE001 — not implemented on this ledger yet / network
+        attested = False
+    return (key, pub_hex, sha) if attested else None
+
+
+def _pq_sign(prep: _Prepared, pq) -> None:
+    if pq is not None:
+        key, pub_hex, _ = pq
+        sig = key.sign(bytes.fromhex(prep.manifest.digest())).hex()
+        prep.pq = {"alg": PQ_ALG, "public_key": pub_hex, "signature": sig}
 
 
 def sign_image(
@@ -251,8 +283,10 @@ def sign_image(
             raise ValueError("develop needs the parent: the signed RAW (digital negative) it was developed from")
         if anonymous or neg.manifest.anonymous or neg.manifest.signer != key.public_key:
             raise ValueError("develop must be signed by the same device that signed the RAW negative")
+    pq = None if anonymous else _pq_material(signer, key.public_key, ledger)
     prep = _prepare(rgb, op or ("ai_generate" if signer == "ai" else "capture"), key.public_key, ledger, store,
-                    parent=parent, exif=exif, anonymous=anonymous)
+                    parent=parent, exif=exif, anonymous=anonymous, pq_pubkey_sha256=pq[2] if pq else None)
+    _pq_sign(prep, pq)
     digest = prep.manifest.digest()
     bundle = None
     if anonymous:
@@ -283,8 +317,11 @@ def prepare_passkey_sign(
     """Step 1: commit the image for the device whose passkey is registered; the manifest digest
     is the WebAuthn challenge. Pass `ledger` to get the T0 lower bound and check `parent`."""
     reg = _passkey_registration()
-    prep = _prepare(rgb, "capture", load_key("device").public_key, ledger, store,
-                    parent=parent, exif=exif, passkey=str(reg["public_key"]).lower())
+    device = load_key("device").public_key
+    pq = _pq_material("device", device, ledger)
+    prep = _prepare(rgb, "capture", device, ledger, store, parent=parent, exif=exif,
+                    passkey=str(reg["public_key"]).lower(), pq_pubkey_sha256=pq[2] if pq else None)
+    _pq_sign(prep, pq)
     prep_id = secrets.token_urlsafe(18)
     now = time.monotonic()
     with _PREPS_LOCK:
@@ -316,7 +353,10 @@ def complete_passkey_sign(
 
 
 def _sha256_hex(hex_bytes: str | None) -> str:
-    return hashlib.sha256(bytes.fromhex(hex_bytes or "")).hexdigest()
+    try:
+        return hashlib.sha256(bytes.fromhex(hex_bytes or "")).hexdigest()
+    except ValueError:
+        return ""
 
 
 def _check_passkey(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledger: Ledger) -> tuple[bool, bool]:
@@ -442,6 +482,12 @@ def verify_image(
     elif not sig_ok:
         verdict = FinalVerdict.UNKNOWN
         reason = "Anchored signature does not verify against the signer key"
+    elif auth["pq"] and not auth["pq"]["signature_ok"]:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Post-quantum (ML-DSA-87) signature declared by the manifest is missing or invalid"
+    elif auth["pq"] and not auth["pq"]["attested"]:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Post-quantum (ML-DSA-87) key is not the one the registry attests for this device"
     elif tiles.verdict == Verdict.INVALID_DISCLOSURE:
         verdict = FinalVerdict.UNKNOWN
         reason = "Tile disclosure does not match the signed Merkle roots"
@@ -495,6 +541,8 @@ def verify_image(
             else f"Signed with a hardware passkey attested for a {credential.value} credential"
             if is_passkey else f"Signed by a {credential.value} credential"
         )
+        if auth["pq"]:
+            who += " — hybrid post-quantum signature (Ed25519 + ML-DSA-87)"
         reason = f"{who}; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
             reason += f", {c['redacted']} redacted"
@@ -513,6 +561,7 @@ def verify_image(
         time_window=_time_window(manifest, anchor, ledger),
         disclosure_cid=manifest.disclosure_cid or None,
         batch=batch_info,
+        post_quantum=auth["pq"],
         passkey=is_passkey,
         # Claims describe the signed capture: only shown when the verdict ties this image to it.
         meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
@@ -566,8 +615,20 @@ def _authenticate(anchor: Anchor, manifest: Manifest, tx_hash: str, ledger: Ledg
     else:
         out.update(sig_ok=verify_signature(anchor.digest, anchor.signature, anchor.pubkey),
                    credential=ledger.credential_type(anchor.pubkey, anchor.timestamp))
+    out["pq"] = None
+    if manifest.pq_pubkey_sha256:  # declared in the signed manifest: mandatory (no downgrade)
+        pqb = store.get_pq(tx_hash) or {}
+        pub = str(pqb.get("public_key", ""))
+        sig_pq = (pqb.get("alg") == PQ_ALG and _sha256_hex(pub) == manifest.pq_pubkey_sha256
+                  and verify_pq(anchor.digest, str(pqb.get("signature", "")), pub))
+        try:
+            attested = ledger.credential_pq(anchor.pubkey) == manifest.pq_pubkey_sha256
+        except Exception:  # noqa: BLE001
+            attested = False
+        out["pq"] = {"alg": PQ_ALG, "signature_ok": bool(sig_pq), "attested": bool(attested)}
     out["verified"] = bool(
-        out["manifest_matches"] and out["sig_ok"]
+        (out["pq"] is None or (out["pq"]["signature_ok"] and out["pq"]["attested"]))
+        and out["manifest_matches"] and out["sig_ok"]
         and (not anchor.anonymous or out["credential"] is not None)  # root in force at anchor time
         and (not out["passkey"] or out["passkey_attested"])
     )

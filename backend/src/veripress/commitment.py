@@ -50,6 +50,7 @@ class Manifest:
     anonymous: bool = False  # signed with a zero-knowledge device attestation (signer = "")
     meta_commitment: str | None = None  # Poseidon commitment to EXIF time + GPS (ZK B)
     passkey: str | None = None  # P-256 public key (SEC1 hex) when signed with a passkey
+    pq_pubkey_sha256: str | None = None  # sha256 of the attested ML-DSA-87 key (hybrid post-quantum)
     disclosure_cid: str = ""  # CIDv1 (raw, sha2-256) of the canonical disclosure JSON
     t0: dict | None = None  # {"ledger_index", "ledger_hash"}: latest validated XRPL ledger at signing
     v: int = VERSION

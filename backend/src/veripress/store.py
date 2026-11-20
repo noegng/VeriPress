@@ -95,6 +95,19 @@ class Store:
             return []
         return data if isinstance(data, list) else []
 
+    def put_pq(self, entry_id: str, pq: dict) -> None:
+        """Hybrid post-quantum signature {alg, public_key, signature} (too big for a 1 kB memo)."""
+        if valid_id(entry_id):
+            (self.root / entry_id / "pq.json").write_text(json.dumps(pq, separators=(",", ":")))
+
+    def get_pq(self, entry_id: str) -> dict | None:
+        p = self.root / entry_id / "pq.json" if valid_id(entry_id) else None
+        try:
+            data = json.loads(p.read_text()) if p is not None and p.exists() else None
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
     def put_receipt(self, entry_id: str, receipt: dict) -> None:
         """Aggregated anchoring: {batch_tx, index, leaf, proof} or {queued: leaf} (untrusted)."""
         if valid_id(entry_id):

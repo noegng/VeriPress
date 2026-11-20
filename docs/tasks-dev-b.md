@@ -99,6 +99,15 @@ Option côté page : un mode « lot » (plusieurs fichiers, puis « Anchor batch
 
 T0 côté XRPL : conforme, et vérifié sur Testnet (bon hash → heure de clôture ; hash faux ou ledger futur → `None`). Un accroc : en résolvant le conflit avec la PR #31 (commit `c2a63a7`), **le stub `XrplLedger.anchor_batch` a été supprimé**. Le protocole, `FakeLedger` et `Anchor.batch_size` sont intacts, mais un `BatchingLedger.flush()` sur Testnet lève maintenant une `AttributeError` au lieu d'un message clair. → Implémente directement `anchor_batch` (§ « Ancrage groupé » plus haut), ou remets le stub en attendant.
 
+## Signature hybride post-quantique (Dev A, 20/11 ~18 h 45)
+
+Contrat : `interfaces.md` § « Signature hybride post-quantique ». À faire de ton côté :
+1. `setup_testnet.py` : générer une clé ML-DSA-87 par appareil (`keys/device.json["mldsa"]`, idem pour `ai`), puis l'attester dans l'`URI` du Credential (`mldsa87:sha256:<hex>`, séparé par `;` de `passkey:sha256:…`). Attention : `--passkey` et la réémission ne doivent pas effacer l'autre partie de l'URI.
+2. `XrplLedger.credential_pq(pubkey)` : lire cette partie de l'URI. Et `_passkey_from_uri` doit tolérer le `;`.
+3. Page et `/v/<id>` : afficher `post_quantum` (« 🔐 hybrid post-quantum: Ed25519 + ML-DSA-87 ✓ »).
+
+Tant que ce n'est pas fait, on signe en Ed25519 seul : rien ne casse.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. ~13 h — phase 1 :** script Testnet, `XrplLedger`, API (branchée sur le vrai pipeline), page (signer / vérifier, heatmap, masquage, arbre ↔ image, historique, lien public), retours de revue 1–7. Répétition complète en `xrpl` + filigrane : les 6 étapes passent.
