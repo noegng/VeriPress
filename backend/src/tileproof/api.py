@@ -167,6 +167,8 @@ async def sign(image: UploadFile = File(...), signer: str = Form("device"), pare
         )
     except FileNotFoundError as e:  # keys/ missing
         raise HTTPException(503, f"signing key missing — run scripts/setup_testnet.py ({e.filename})") from e
+    except ValueError as e:  # pipeline: "unknown parent …" (not anchored / not in the store)
+        raise HTTPException(422, str(e)) from e
     except RuntimeError as e:  # anchor tx rejected
         raise HTTPException(502, str(e)) from e
     return result.to_json()

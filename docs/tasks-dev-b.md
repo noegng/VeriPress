@@ -43,9 +43,11 @@ Les points 1 à 3 ci-dessus sont confirmés corrigés (merci !). Nouveaux points
 6. **Historique** : une entrée non vérifiée a `timestamp: null`, ce qui s'affiche « 01/01/1970 ». Afficher « — » à la place (l. ~321).
 7. **Libellés** : « Signed and anchored on XRPL Testnet » (l. ~99) et les liens de l'historique restent figés sur Testnet, même avec le ledger factice. Mineur.
 
+**→ Fait (Dev B)** : (4) plus de pré-remplissage du tx_hash après signature, et le champ est vidé quand on choisit une nouvelle image à vérifier ; (5) `ValueError` du pipeline → 422, tests `test_sign_with_unknown_parent_is_422` et `…_known_parent_builds_history` ; (6) `timestamp: null` → « — » (dates de l'ancre et de l'historique) ; (7) libellé du bouton Signer et liens de l'explorateur selon `/api/health` (hors ligne : hash sans lien). Vérifié dans le navigateur, signature réelle sur Testnet comprise.
+
 ## Phase 2 (contrat : `interfaces.md` § Phase 2 ; décisions : `decisions.md`)
 
-D'abord les points 4 et 5 ci-dessus (piège de l'étape 3 ; `ValueError` → 422). Fusion **par PR** désormais (`team-rules.md` §3).
+Fusion **par PR** désormais (`team-rules.md` §3).
 
 1. **Registre anonyme** : `setup_testnet.py` crée une clé Baby Jubjub par appareil (`node zk/cli.mjs keygen`, dès que Dev A l'a livré), ajoute ~20 appareils fictifs, écrit `keys/registry_devices.json`, calcule la racine (`zk root`) et la publie (Memo `tileproof/registry-root/v1`). `--revoke device` publie aussi une nouvelle racine sans lui. `XrplLedger.registry_root_at(t)` et `anchor_anonymous`.
 2. **Révocation non rétroactive** : `credential_type(pubkey, at_time)` honore `at_time` (date du `CredentialCreate` / `CredentialDelete` dans l'historique du compte registre), et `credential_revoked_at`.
