@@ -29,7 +29,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
-from . import metadata, pipeline, watermark, zk
+from . import c2pa_embed, metadata, pipeline, watermark, zk
+from .batching import BatchingLedger
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
 from .signing import keys_dir
 from .store import Store
@@ -299,6 +300,57 @@ async def sign(
     return body
 
 
+MAX_BATCH = 8  # photos per batch request (each decoded and signed one after the other)
+
+
+@app.post("/api/sign/batch")
+async def sign_batch(
+    images: list[UploadFile] = File(...),
+    signer: str = Form("device"),
+    anonymous: str | None = Form(None),
+    wait: str | None = Form(None),
+):
+    """Aggregated anchoring (interfaces.md § Ancrage groupé): every photo is signed as usual,
+    then ONE transaction anchors the Merkle root of the records; each photo gets a receipt
+    proving its leaf is in that root. A file that cannot be signed is reported, the others
+    are still anchored."""
+    if signer not in ("device", "ai"):
+        raise HTTPException(422, "signer must be device|ai")
+    if not 1 <= len(images) <= MAX_BATCH:
+        raise HTTPException(422, f"a batch has 1 to {MAX_BATCH} images")
+    anon = (anonymous or "").strip().lower() in ("1", "true", "on")
+    wait_validated = wait_for_validation(wait)
+    batching = BatchingLedger(app.state.ledger, app.state.store)
+    entries = []
+    for upload in images:
+        try:
+            data, rgb = await read_upload(upload)
+            exif = await run_in_threadpool(metadata.exif_from_upload, data)
+            result, _png = await run_in_threadpool(
+                lambda: pipeline.sign_image(rgb, signer, batching, app.state.store, anonymous=anon, exif=exif)
+            )
+            entries.append({"name": upload.filename, "entry_id": result.entry_id,
+                            "image_url": f"/api/files/{result.entry_id}.png"})
+        except HTTPException as e:  # unreadable / too large
+            entries.append({"name": upload.filename, "error": str(e.detail)})
+        except FileNotFoundError as e:
+            raise HTTPException(503, f"signing key missing — run scripts/setup_testnet.py ({e.filename})") from e
+        except zk.ZkError as e:
+            raise HTTPException(503, f"zero-knowledge prover unavailable — run `cd zk && npm ci` ({e})") from e
+        except ValueError as e:  # e.g. the AI key in anonymous mode
+            entries.append({"name": upload.filename, "error": str(e)})
+    signed = [e for e in entries if "entry_id" in e]
+    if not signed:
+        raise HTTPException(422, "no image of the batch could be signed: " + "; ".join(e["error"] for e in entries))
+    try:
+        tx = await run_in_threadpool(lambda: batching.flush(wait=wait_validated))
+    except RuntimeError as e:  # anchor tx rejected
+        raise HTTPException(502, str(e)) from e
+    batch = await run_in_threadpool(app.state.ledger.fetch_anchor, tx)
+    return {"tx_hash": tx, "explorer_url": batch.explorer_url if batch else None, "size": len(signed),
+            "pending": not (batch and batch.validated), "entries": entries}
+
+
 def wait_for_validation(wait) -> bool:
     """wait=0 / false: fast anchoring, answer at submission (pending until validated). Default:
     wait. The offline FakeLedger has no consensus to wait for (and nothing would ever validate
@@ -310,11 +362,30 @@ def wait_for_validation(wait) -> bool:
 @app.post("/api/verify")
 async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None)):
     entry_id = norm_entry_id(entry_id)
-    rgb = await read_image(image)
+    data, rgb = await read_upload(image)
     report, heatmap = await run_in_threadpool(
         pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id
     )
-    return report.to_json(heatmap)
+    body = report.to_json(heatmap)
+    body["c2pa"] = await run_in_threadpool(c2pa_info, data, body)
+    return body
+
+
+def c2pa_info(data: bytes, report: dict) -> dict | None:
+    """C2PA manifest carried by the uploaded FILE (pixels never hold it), as information only
+    (security-review.md): anyone can forge a manifest pointing to any anchor, so this never
+    feeds the verdict. Typical demo: present on the published PNG, gone after WhatsApp, while
+    VeriPress still recovers the provenance from the pixels."""
+    try:
+        info = c2pa_embed.read(data)
+    except Exception:  # noqa: BLE001 — unreadable / c2pa library missing: nothing to report
+        return None
+    if not info:
+        return None
+    anchor = report.get("anchor") or {}
+    ours = {str(x).upper() for x in (anchor.get("tx_hash"), report.get("entry_id")) if x}
+    info["matches_anchor"] = str(info.get("tx_hash") or "").upper() in ours
+    return info
 
 
 # --- Passkey (phase 2 task 6, decisions.md Q21-Q23) ------------------------------------------

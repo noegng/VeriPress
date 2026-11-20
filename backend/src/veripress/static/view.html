@@ -121,6 +121,8 @@ $("info").innerHTML = [
   ["Signed between", timeWindow(r.time_window)],
   ["Anchored", a && esc(fmtTime(a.timestamp))],
   ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
+  ["Batch", r.batch && `photo ${Number(r.batch.index) + 1} of ${Number(r.batch.size)} in one transaction · Merkle receipt ✅`],
+  ["Disclosure CID", r.disclosure_cid && `<code title="${esc(r.disclosure_cid)}">${esc(short(r.disclosure_cid))}</code>`],
   ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.counts.exact + r.tiles.counts.robust}/${r.tiles.statuses.length} match`)],
 ].filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
 const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", develop: "🎞️ Developed from the signed RAW", ai_generate: "🤖 AI-generated" };
