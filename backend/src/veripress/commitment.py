@@ -28,6 +28,11 @@ ROBUST_DOMAIN = b"VPR1"
 VERSION = 1
 REDACTED_MAX_MEAN = 16  # a redacted tile is black; JPEG keeps it far below these bounds
 REDACTED_MAX_P95 = 48
+# In a lossless copy a redacted tile must be black for real: dark grey text written under the
+# box used to pass. (In a lossy copy, JPEG block noise on black reaches the level of faint text:
+# only the bounds above apply there.)
+REDACTED_MAX_LOSSLESS_P99 = 8
+LOSSLESS_EXACT_SHARE = 0.5  # textured tiles still byte-identical: the copy is lossless
 
 
 # ---------------------------------------------------------------- data model
@@ -40,9 +45,7 @@ class Manifest:
     tile: int
     exact_root: str
     robust_root: str
-    feature: dict = field(
-        default_factory=lambda: {"pool": F.POOL, "n": F.N_COEFFS, "step": F.STEP}
-    )
+    feature: dict = field(default_factory=lambda: dict(F.SPEC))  # robust feature parameters
     signer: str = ""  # XRPL ed25519 public key ("ED…") of the signing device / generator
     op: str = "capture"  # capture | ai_generate | edit
     parent: str | None = None  # tx hash of the version this one was edited from
@@ -127,18 +130,20 @@ def _alt(t: "TileDisclosure"):
 
 
 def commit(
-    rgb: np.ndarray, seed: bytes, tile: int | None = None, original: np.ndarray | None = None
+    rgb: np.ndarray, seed: bytes, tile: int | None = None, original: np.ndarray | None = None,
+    spec: dict = F.SPEC,
 ) -> tuple[Manifest, Disclosure]:
     """`original`: the same picture before watermarking, so that it (and its shared copies)
-    also verifies; the exact tree covers `rgb` only."""
+    also verifies; the exact tree covers `rgb` only. `spec`: robust feature parameters."""
+    spec = F.check_spec(spec)
     tile = tile or auto_tile(rgb.shape[1], rgb.shape[0])
     grid = grid_for(rgb, tile)
-    feats = F.quantized_features(rgb, grid)
+    feats = F.quantized_features(rgb, grid, spec)
     salts = [tile_salt(seed, i) for i in range(grid.count)]
     exact = [_exact_leaf(rgb, grid, i, salts[i]) for i in range(grid.count)]
     if original is not None and original.shape != rgb.shape:
         raise ValueError("original must have the same size as the watermarked image")
-    alts = F.quantized_features(original, grid) if original is not None else [None] * grid.count
+    alts = F.quantized_features(original, grid, spec) if original is not None else [None] * grid.count
     robust = [_robust_leaf(feats[i], i, salts[i], alts[i]) for i in range(grid.count)]
     manifest = Manifest(
         width=grid.width,
@@ -146,6 +151,7 @@ def commit(
         tile=tile,
         exact_root=MerkleTree(exact).root.hex(),
         robust_root=MerkleTree(robust).root.hex(),
+        feature=dict(spec),
     )
     disclosure = Disclosure(
         tiles=[
@@ -212,10 +218,12 @@ class VerifyResult:
 
 def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> VerifyResult:
     grid = manifest.grid
-    if manifest.feature != {"pool": F.POOL, "n": F.N_COEFFS, "step": F.STEP}:
-        raise ValueError(f"unsupported feature params {manifest.feature}")
+    spec = F.check_spec(manifest.feature)
     tiles = sorted(disclosure.tiles, key=lambda t: t.i)
-    if [t.i for t in tiles] != list(range(grid.count)):
+    if [t.i for t in tiles] != list(range(grid.count)) or any(
+        not t.redacted and (len(t.f or []) != F.vector_length(spec) or (t.g is not None and len(t.g) != len(t.f)))
+        for t in tiles
+    ):
         return VerifyResult(Verdict.INVALID_DISCLOSURE, [], [], False, False)
 
     # 1. Authenticate the disclosure itself against the signed roots.
@@ -231,7 +239,7 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
 
     # 2. Compare the received image tile by tile.
     rgb = resize_to(rgb, grid.width, grid.height)
-    raw = F.raw_features(rgb, grid)
+    raw = F.raw_features(rgb, grid, spec)
     statuses: list[TileStatus] = []
     original_tiles = 0
     distances: list[float] = []
@@ -244,9 +252,9 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
             statuses.append(TileStatus.REDACTED if hidden else TileStatus.CHANGED)
             distances.append(0.0 if hidden else float("inf"))
             continue
-        dist = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.f]))[0])
+        dist = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.f]), spec)[0])
         if t.g is not None:  # closer to the unwatermarked original?
-            dist_g = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.g]))[0])
+            dist_g = float(F.tile_distance(raw[t.i : t.i + 1], np.array([t.g]), spec)[0])
             closer_to_original = dist_g < dist
             dist = min(dist, dist_g)
         else:
@@ -259,6 +267,18 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
             original_tiles += closer_to_original
         else:
             statuses.append(TileStatus.CHANGED)
+
+    # 3. A lossless copy (most textured tiles byte-identical) has no recompression noise to
+    # forgive: a tile that is merely "close" there was edited subtly (recolouring, light blur).
+    textured = [k for k, t in enumerate(tiles) if not t.redacted and F.is_textured(t.f, spec)]
+    exact_textured = sum(statuses[k] == TileStatus.EXACT for k in textured)
+    if textured and exact_textured >= LOSSLESS_EXACT_SHARE * len(textured):
+        for k, s in enumerate(statuses):
+            if s == TileStatus.ROBUST:
+                statuses[k] = TileStatus.CHANGED
+            elif s == TileStatus.REDACTED and np.percentile(tile_pixels(rgb, grid, tiles[k].i), 99) > REDACTED_MAX_LOSSLESS_P99:
+                statuses[k], distances[k] = TileStatus.CHANGED, float("inf")
+        original_tiles = 0
 
     if TileStatus.CHANGED in statuses:
         verdict = Verdict.EDITED
