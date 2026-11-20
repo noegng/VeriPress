@@ -22,9 +22,13 @@ Conventions (fixed):
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Protocol
 
 
@@ -84,18 +88,109 @@ class FakeLedger:
         return self.credentials.get(pubkey)
 
 
-class XrplLedger:
-    """Real implementation on XRPL Testnet — TODO Dev B.
+MEMO_TYPE = "tileproof/v1"
+LSF_ACCEPTED = 0x00010000
+DEFAULT_NODE = "https://s.altnet.rippletest.net:51234"
+EXPLORER = "https://testnet.xrpl.org/transactions/"
 
-    Reads config from env / keys/ (see docs/interfaces.md): node URL, anchoring service
-    wallet, registry address. Explorer: https://testnet.xrpl.org/transactions/<hash>
+
+class XrplLedger:
+    """Real implementation on XRPL Testnet.
+
+    Config: env TILEPROOF_XRPL_URL (default Testnet JSON-RPC), TILEPROOF_KEYS (default
+    backend/keys). Needs keys/anchor.json (payer) and keys/registry.json (issuer + destination),
+    written by scripts/setup_testnet.py.
     """
 
+    def __init__(self, node_url: str | None = None, keys_dir: str | Path | None = None) -> None:
+        from xrpl.clients import JsonRpcClient
+        from xrpl.wallet import Wallet
+
+        keys = Path(keys_dir or os.environ.get("TILEPROOF_KEYS") or Path(__file__).resolve().parents[2] / "keys")
+        self.client = JsonRpcClient(node_url or os.environ.get("TILEPROOF_XRPL_URL") or DEFAULT_NODE)
+        self.registry = json.loads((keys / "registry.json").read_text())["address"]
+        self.wallet = Wallet.from_seed(json.loads((keys / "anchor.json").read_text())["seed"])
+
     def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
-        raise NotImplementedError
+        from xrpl.models.transactions import Memo, Payment
+        from xrpl.transaction import submit_and_wait
+        from xrpl.utils import str_to_hex
+
+        data = json.dumps({"d": digest, "s": signature, "k": pubkey}, separators=(",", ":"))
+        tx = Payment(
+            account=self.wallet.address,
+            destination=self.registry,
+            amount="1",
+            memos=[Memo(memo_type=str_to_hex(MEMO_TYPE), memo_data=str_to_hex(data))],
+        )
+        resp = submit_and_wait(tx, self.client, self.wallet)
+        code = resp.result.get("meta", {}).get("TransactionResult")
+        if code != "tesSUCCESS":
+            raise RuntimeError(f"anchor tx failed: {code}")
+        tx_hash = resp.result["hash"]
+        return Anchor(tx_hash, digest, signature, pubkey, _close_time(resp.result), EXPLORER + tx_hash)
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
-        raise NotImplementedError
+        from xrpl.models.requests import Tx
+        from xrpl.utils import hex_to_str
+
+        resp = self.client.request(Tx(transaction=tx_hash))
+        if not resp.is_successful() or not resp.result.get("validated"):
+            return None
+        r = resp.result
+        tx = r.get("tx_json", r)  # API v2 nests fields under tx_json
+        if (
+            tx.get("TransactionType") != "Payment"
+            or tx.get("Destination") != self.registry
+            or r.get("meta", {}).get("TransactionResult") != "tesSUCCESS"
+        ):
+            return None
+        for m in tx.get("Memos", []):
+            memo = m.get("Memo", {})
+            try:
+                if hex_to_str(memo.get("MemoType", "")) != MEMO_TYPE:
+                    continue
+                data = json.loads(hex_to_str(memo["MemoData"]))
+                hash_ = r.get("hash", tx_hash).upper()
+                return Anchor(hash_, data["d"], data["s"], data["k"], _close_time(r), EXPLORER + hash_)
+            except (KeyError, ValueError, UnicodeDecodeError):
+                continue
+        return None
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
-        raise NotImplementedError
+        from xrpl.core.keypairs import derive_classic_address
+        from xrpl.models.requests import LedgerEntry
+        from xrpl.models.requests.ledger_entry import Credential
+        from xrpl.utils import posix_to_ripple_time, str_to_hex
+
+        try:
+            subject = derive_classic_address(pubkey)
+        except Exception:
+            return None
+        now = posix_to_ripple_time(int(time.time()))
+        for ctype in CredentialType:
+            resp = self.client.request(
+                LedgerEntry(
+                    credential=Credential(subject=subject, issuer=self.registry, credential_type=str_to_hex(ctype.value)),
+                    ledger_index="validated",
+                )
+            )
+            if not resp.is_successful():
+                continue
+            node = resp.result["node"]
+            expired = "Expiration" in node and node["Expiration"] <= now
+            if node.get("Flags", 0) & LSF_ACCEPTED and not expired:
+                return ctype
+        return None
+
+
+def _close_time(result: dict) -> int:
+    """Ledger close time (unix seconds) from a tx / submit_and_wait result."""
+    from xrpl.utils import ripple_time_to_posix
+
+    tx = result.get("tx_json", result)
+    if "date" in tx:
+        return ripple_time_to_posix(tx["date"])
+    if "close_time_iso" in result:
+        return int(datetime.fromisoformat(result["close_time_iso"].replace("Z", "+00:00")).timestamp())
+    return int(time.time())
