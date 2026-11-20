@@ -43,6 +43,7 @@ class Manifest:
     )
     signer: str = ""  # XRPL ed25519 public key ("ED…") of the signing device / generator
     op: str = "capture"  # capture | ai_generate | edit
+    parent: str | None = None  # tx hash of the version this one was edited from
     wm_id: str = ""  # hex 64-bit watermark lookup id embedded in the pixels ("" = none)
     v: int = VERSION
 

@@ -166,7 +166,7 @@ def test_report_json_matches_api_contract(photo, ledger, store):
     j = report.to_json(heatmap)
     json.dumps(j)  # serialisable
     assert set(j) == {"verdict", "reason", "found_by", "entry_id", "anchor", "credential",
-                      "signature_ok", "tiles", "heatmap_png_b64"}
+                      "signature_ok", "tiles", "history", "heatmap_png_b64"}
     assert j["verdict"] == "real" and j["credential"] == "CAPTURE_DEVICE" and j["found_by"] == "tx_hash"
     assert set(j["anchor"]) == {"tx_hash", "timestamp", "explorer_url", "signer"}
     assert j["anchor"]["signer"] == signed.manifest.signer
@@ -231,3 +231,17 @@ def test_watermark_copied_onto_another_image_is_detected(photo, ledger, store):
     assert report.found_by == "watermark"
     assert report.verdict == FinalVerdict.UNKNOWN
     assert "watermark" in report.reason.lower()
+
+
+def test_signed_edit_links_back_to_the_original(photo, ledger, store):
+    original, png = sign_image(photo, "device", ledger, store)
+    edited = png_to_rgb(png).copy()
+    edited[0:64, 0:64] = 0
+    version, vpng = sign_image(edited, "device", ledger, store, parent=original.entry_id)
+    assert version.manifest.op == "edit" and version.manifest.parent == original.entry_id
+    report, _ = verify_image(png_to_rgb(vpng), ledger, store, entry_id=version.entry_id)
+    assert report.verdict == FinalVerdict.EDITED
+    assert "signed edit" in report.reason.lower()
+    assert [h["tx_hash"] for h in report.history] == [version.entry_id, original.entry_id]
+    assert [h["op"] for h in report.history] == ["edit", "capture"]
+    assert report.to_json()["history"] == report.history

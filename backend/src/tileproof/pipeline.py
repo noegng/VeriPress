@@ -16,7 +16,7 @@ from __future__ import annotations
 import base64
 import io
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
@@ -74,6 +74,7 @@ class Report:
     signature_ok: bool
     tiles: VerifyResult | None
     grid: Grid | None = None
+    history: list[dict] = field(default_factory=list)  # newest first: {tx_hash, op, timestamp, verified}
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
         """Shape: docs/interfaces.md "POST /api/verify"."""
@@ -96,6 +97,7 @@ class Report:
                 "statuses": [s.value for s in t.statuses],
                 "distances": [round(d, 2) for d in t.distances],
             },
+            "history": self.history,
             "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
         }
 
@@ -106,8 +108,11 @@ def _png(img: np.ndarray | Image.Image) -> bytes:
     return buf.getvalue()
 
 
-def sign_image(rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store) -> tuple[SignResult, bytes]:
-    """Commit, sign, anchor, store. Returns the result and the PNG to publish."""
+def sign_image(
+    rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None
+) -> tuple[SignResult, bytes]:
+    """Commit, sign, anchor, store. Returns the result and the PNG to publish.
+    `parent`: tx hash of the signed version this image was edited from (version chain)."""
     key = load_key(signer)
     wm_id = b""
     if watermark.enabled():
@@ -116,7 +121,8 @@ def sign_image(rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store) ->
     manifest, disclosure = commit(rgb, os.urandom(32))
     manifest.wm_id = wm_id.hex()
     manifest.signer = key.public_key
-    manifest.op = "ai_generate" if signer == "ai" else "capture"
+    manifest.op = "ai_generate" if signer == "ai" else ("edit" if parent else "capture")
+    manifest.parent = parent
     digest = manifest.digest()
     anchor = ledger.anchor(digest, key.sign(digest), key.public_key)
     png = _png(rgb)
@@ -167,6 +173,9 @@ def verify_image(
         reason = "Watermark points to a record whose content does not match this image (copied watermark?)"
     elif tiles.verdict == Verdict.EDITED:
         verdict = FinalVerdict.EDITED
+    elif manifest.op == "edit" and credential is not None:
+        verdict = FinalVerdict.EDITED
+        reason = f"Signed edit of {manifest.parent} by a {credential.value} credential"
     elif credential == CredentialType.AI_GENERATOR:
         verdict = FinalVerdict.AI
     elif credential == CredentialType.CAPTURE_DEVICE:
@@ -174,9 +183,25 @@ def verify_image(
     else:
         verdict = FinalVerdict.UNKNOWN
         reason = "Signer has no valid credential (never issued or revoked)"
-    report = Report(verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid)
+    history = _history(entry.tx_hash, ledger, store)
+    report = Report(verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history)
     hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
     return report, hm
+
+
+def _history(tx_hash: str | None, ledger: Ledger, store: Store, max_depth: int = 20) -> list[dict]:
+    """Walk the `parent` chain; each step checks the stored manifest against its anchor."""
+    out: list[dict] = []
+    while tx_hash and len(out) < max_depth:
+        entry, anchor = store.get(tx_hash), ledger.fetch_anchor(tx_hash)
+        if entry is None or anchor is None:
+            out.append({"tx_hash": tx_hash, "op": None, "timestamp": None, "verified": False})
+            break
+        m = entry.manifest
+        ok = anchor.digest == m.digest() and verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
+        out.append({"tx_hash": tx_hash, "op": m.op, "timestamp": anchor.timestamp, "verified": ok})
+        tx_hash = m.parent if ok else None
+    return out
 
 
 def redact_image(
