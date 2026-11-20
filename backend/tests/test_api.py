@@ -274,3 +274,21 @@ def test_public_page_escapes_a_hostile_report(client, monkeypatch):
     assert "<script>alert(1)</script>" not in page
     assert "&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in page  # meta description, escaped
     assert "\\u003cscript>alert(1)\\u003c/script>" in page  # embedded JSON, cannot close the tag
+
+
+def test_fast_anchoring_flag_and_anchor_status(client, signed):
+    """wait=0 reaches the pipeline (the FakeLedger validates at once, so pending stays False);
+    /api/anchor/<tx> gives the light status the page polls."""
+    from conftest import photo_like
+
+    r = client.post(
+        "/api/sign",
+        files={"image": ("a.png", png(photo_like(seed=14)), "image/png")},
+        data={"signer": "device", "wait": "0"},
+    )
+    assert r.status_code == 200 and r.json()["pending"] is False
+    tx = r.json()["tx_hash"]
+    s = client.get(f"/api/anchor/{tx.lower()}").json()
+    assert s["tx_hash"] == tx and s["validated"] is True
+    assert client.get(f"/api/anchor/{'AB' * 32}").status_code == 404
+    assert client.get("/api/anchor/xyz").status_code == 422

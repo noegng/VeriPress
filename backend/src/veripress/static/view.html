@@ -18,10 +18,10 @@
 <style>
   :root {
     --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
-    --accent: #1f5eff; --real: #157347; --edited: #c2410c; --ai: #1864ab; --unknown: #5c636a;
+    --accent: #1f5eff; --accent-btn: #1f5eff; --real: #157347; --edited: #c2410c; --ai: #1864ab; --unknown: #5c636a;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; }
+    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; --accent-btn: #3563d9; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -47,7 +47,7 @@
   ol.history li::before { content: ""; position: absolute; left: -6px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
   ol.history li.bad::before { background: #c92a2a; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
-  .btn { border: 0; background: var(--accent); color: #fff; font: inherit; font-weight: 600; padding: 11px 16px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn { border: 0; background: var(--accent-btn); color: #fff; font: inherit; font-weight: 600; padding: 11px 16px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
   .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
   .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
 </style>
@@ -98,6 +98,8 @@ function txLink(hash, url) {
 $("badge").className = "badge " + cls; $("dot").textContent = dot;
 $("title").textContent = r.verdict === "real" && r.anonymous ? "Real — accredited device (anonymous)" : r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)" : label;
 $("reason").textContent = r.pending ? "⏳ " + r.reason : r.reason;
+// Fast anchoring: provisional verdict, reload until the anchor is validated on the ledger.
+if (r.pending) setTimeout(() => location.reload(), 5000);
 if (r.heatmap_png_b64) { $("heatmap").src = "data:image/png;base64," + r.heatmap_png_b64; $("heatmap").hidden = false; }
 const claims = r.meta_claims || [];
 $("claimsBox").hidden = !claims.length;
