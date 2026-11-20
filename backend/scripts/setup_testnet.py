@@ -13,6 +13,12 @@ and its Poseidon root published on XRPL. Safe to re-run after a Testnet reset.
 
 The registry follows the credentials: the real device is in the tree iff its CAPTURE_DEVICE
 credential is accepted, so --revoke / --reissue republish the right root by themselves.
+
+Each subject also gets an ML-DSA-87 key (hybrid post-quantum signature, keys/<name>.json
+["mldsa"]). The registry attests it, and the passkey, in the credential URI:
+"passkey:sha256:<hex>;mldsa87:sha256:<hex>". XRPL cannot edit a URI, so whenever the attested
+keys change the credential is deleted and re-created (not retroactive: photos anchored before
+keep verifying), and every option rebuilds the full URI so none drops the other's part.
 Needs Node >= 20 and `cd zk && npm ci` for the ZK part.
 """
 
@@ -35,7 +41,7 @@ from xrpl.utils import str_to_hex
 from xrpl.wallet import Wallet, generate_faucet_wallet
 
 from veripress import zk
-from veripress.ledger import REGISTRY_ROOT_MEMO_TYPE, XrplLedger, passkey_uri
+from veripress.ledger import REGISTRY_ROOT_MEMO_TYPE, XrplLedger, attestation_uri, uri_attestations
 
 NODE_URL = "https://s.altnet.rippletest.net:51234"
 KEYS = Path(__file__).resolve().parent.parent / "keys"
@@ -72,17 +78,22 @@ def load_or_create(client: JsonRpcClient, name: str, algo: CryptoAlgorithm, fres
     return wallet
 
 
-def credential_state(client: JsonRpcClient, subject: str, issuer: str, ctype: str) -> str:
-    """'missing' | 'pending' | 'accepted'"""
+def credential_node(client: JsonRpcClient, subject: str, issuer: str, ctype: str) -> dict | None:
     resp = client.request(
         LedgerEntry(
             credential=Credential(subject=subject, issuer=issuer, credential_type=str_to_hex(ctype)),
             ledger_index="validated",
         )
     )
-    if not resp.is_successful():
+    return resp.result["node"] if resp.is_successful() else None
+
+
+def credential_state(client: JsonRpcClient, subject: str, issuer: str, ctype: str) -> str:
+    """'missing' | 'pending' | 'accepted'"""
+    node = credential_node(client, subject, issuer, ctype)
+    if node is None:
         return "missing"
-    return "accepted" if resp.result["node"].get("Flags", 0) & LSF_ACCEPTED else "pending"
+    return "accepted" if node.get("Flags", 0) & LSF_ACCEPTED else "pending"
 
 
 def submit(client: JsonRpcClient, tx, wallet: Wallet, label: str) -> None:
@@ -93,30 +104,65 @@ def submit(client: JsonRpcClient, tx, wallet: Wallet, label: str) -> None:
         sys.exit(f"{label} failed: {code}")
 
 
-def device_passkey_uri(ctype: str) -> str | None:
-    """URI of the device credential: the attested passkey survives --revoke / --reissue."""
-    path = KEYS / "passkey.json"
-    if ctype != SUBJECTS["device"] or not path.exists():
-        return None
+def ensure_mldsa(name: str) -> str:
+    """ML-DSA-87 key of a subject (keys/<name>.json["mldsa"] = {public_key: raw hex, private_pem:
+    PKCS8}), created once. Returns the sha256 hex of the raw public key, attested in the URI."""
+    from cryptography.hazmat.primitives.asymmetric import mldsa
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+    path = KEYS / f"{name}.json"
     data = json.loads(path.read_text())
-    return passkey_uri(data["sha256"]) if data.get("attested") else None
+    if not data.get("mldsa"):
+        key = mldsa.MLDSA87PrivateKey.generate()
+        data["mldsa"] = {
+            "public_key": key.public_key().public_bytes_raw().hex(),
+            "private_pem": key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode(),
+        }
+        write_secret(path, data)
+        log(f"    {name}: new ML-DSA-87 key")
+    return hashlib.sha256(bytes.fromhex(data["mldsa"]["public_key"])).hexdigest()
 
 
-def issue(client: JsonRpcClient, registry: Wallet, subject: Wallet, ctype: str) -> None:
-    state = credential_state(client, subject.address, registry.address, ctype)
-    if state == "missing":
-        uri = device_passkey_uri(ctype)
+def wanted_uri(name: str) -> str:
+    """Full credential URI of a subject: its ML-DSA-87 key, plus the device's passkey once the
+    registry attested it (keys/passkey.json "attested"). Rebuilt in full by every option."""
+    passkey = None
+    path = KEYS / "passkey.json"
+    if name == "device" and path.exists():
+        data = json.loads(path.read_text())
+        passkey = data["sha256"] if data.get("attested") else None
+    return attestation_uri(passkey=passkey, mldsa87=ensure_mldsa(name))
+
+
+def describe(uri: str) -> str:
+    kinds = list(uri_attestations(str_to_hex(uri))) if uri else []
+    return " + ".join({"passkey": "passkey", "mldsa87": "ML-DSA-87"}.get(k, k) for k in kinds) or "no key"
+
+
+def issue(client: JsonRpcClient, registry: Wallet, subject: Wallet, name: str) -> None:
+    """Credential of `name`, accepted, with the wanted URI: created if missing, re-issued
+    (delete + create) if the attested keys changed, accepted if pending."""
+    ctype = SUBJECTS[name]
+    uri = wanted_uri(name)
+    node = credential_node(client, subject.address, registry.address, ctype)
+    if node is not None and str(node.get("URI", "")).upper() != str_to_hex(uri).upper():
+        tx = CredentialDelete(account=registry.address, subject=subject.address, credential_type=str_to_hex(ctype))
+        submit(client, tx, registry, f"CredentialDelete {ctype} (re-issue: attests {describe(uri)})")
+        node = None
+    if node is None:
         tx = CredentialCreate(
             account=registry.address, subject=subject.address, credential_type=str_to_hex(ctype),
             uri=str_to_hex(uri) if uri else None,
         )
-        submit(client, tx, registry, f"CredentialCreate {ctype}" + (" (passkey attested)" if uri else ""))
-        state = "pending"
-    if state == "pending":
+        submit(client, tx, registry, f"CredentialCreate {ctype} (attests {describe(uri)})")
+        accepted = False
+    else:
+        accepted = bool(node.get("Flags", 0) & LSF_ACCEPTED)
+    if not accepted:
         tx = CredentialAccept(account=subject.address, issuer=registry.address, credential_type=str_to_hex(ctype))
         submit(client, tx, subject, f"CredentialAccept {ctype}")
     else:
-        log(f"    {ctype}: already accepted")
+        log(f"    {ctype}: already accepted (attests {describe(uri)})")
 
 
 def load(name: str, algo: CryptoAlgorithm) -> Wallet:
@@ -198,19 +244,9 @@ def attest_passkey(client: JsonRpcClient) -> None:
     data = json.loads(path.read_text())
     registry = load("registry", CryptoAlgorithm.SECP256K1)
     device = load("device", CryptoAlgorithm.ED25519)
-    ctype = SUBJECTS["device"]
-    device_pk = json.loads((KEYS / "device.json").read_text())["public_key"]
-    current = XrplLedger(node_url=NODE_URL, keys_dir=KEYS).credential_passkey(device_pk)
     log(f"Passkey sha256 {data['sha256'][:16]}…")
-    if current == data["sha256"]:
-        log("  already attested in the device credential")
-    else:
-        if credential_state(client, device.address, registry.address, ctype) != "missing":
-            tx = CredentialDelete(account=registry.address, subject=device.address, credential_type=str_to_hex(ctype))
-            submit(client, tx, registry, f"CredentialDelete {ctype} (to re-issue with the passkey)")
-        write_secret(path, {**data, "attested": True})
-        issue(client, registry, device, ctype)
-    write_secret(path, {**data, "attested": True})
+    write_secret(path, {**data, "attested": True})  # wanted_uri() now includes it
+    issue(client, registry, device, "device")  # re-issued only if the URI changes; keeps ML-DSA-87
     log("Anonymous registry:")
     sync_registry(client, registry)
 
@@ -237,7 +273,7 @@ def main() -> None:
         subject = load(name, CryptoAlgorithm.ED25519)
         ctype = SUBJECTS[name]
         if args.reissue:
-            issue(client, registry, subject, ctype)
+            issue(client, registry, subject, name)
         elif credential_state(client, subject.address, registry.address, ctype) == "missing":
             log(f"{ctype} of {name} already absent")
         else:
@@ -254,8 +290,8 @@ def main() -> None:
     subjects = {n: load_or_create(client, n, CryptoAlgorithm.ED25519, args.fresh) for n in SUBJECTS}
 
     log("Credentials:")
-    for name, ctype in SUBJECTS.items():
-        issue(client, registry, subjects[name], ctype)
+    for name in SUBJECTS:
+        issue(client, registry, subjects[name], name)
     log("Anonymous registry:")
     if args.fresh:
         (KEYS / "registry_fakes.json").unlink(missing_ok=True)

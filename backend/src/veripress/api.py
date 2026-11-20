@@ -74,10 +74,14 @@ def make_ledger() -> Ledger:
     for name, ctype in (("device", CredentialType.CAPTURE_DEVICE), ("ai", CredentialType.AI_GENERATOR)):
         p = keys_dir() / f"{name}.json"
         if p.exists():
-            # The device credential carries the attested passkey, as setup_testnet.py --passkey does.
+            # Same attestations as setup_testnet.py puts in the credential URI: the passkey
+            # (once attested) and the subject's ML-DSA-87 key (hybrid post-quantum signature).
+            data = json.loads(p.read_text())
             attested = name == "device" and passkey.get("attested")
-            ledger.issue(json.loads(p.read_text())["public_key"], ctype,
-                         passkey_hash=passkey["sha256"] if attested else None)
+            mldsa = (data.get("mldsa") or {}).get("public_key")
+            ledger.issue(data["public_key"], ctype,
+                         passkey_hash=passkey["sha256"] if attested else None,
+                         pq_hash=hashlib.sha256(bytes.fromhex(mldsa)).hexdigest() if mldsa else None)
     # ...and publish the anonymous registry root, as setup_testnet.py does on XRPL.
     reg = keys_dir() / "registry_devices.json"
     if reg.exists():

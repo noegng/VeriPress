@@ -243,6 +243,13 @@ function txLink(hash, url) {
   const code = `<code>${esc(short(hash))}</code>`;
   return ONCHAIN ? `<a href="${esc(safeUrl(url || EXPLORER + hash))}" target="_blank" rel="noopener">${code} ↗</a>` : code;
 }
+// Hybrid signature: Ed25519 + ML-DSA-87 (FIPS 204), the key attested in the device's credential.
+function pqRow(pq) {
+  if (!pq) return null;
+  if (!pq.signature_ok) return "❌ ML-DSA-87 signature invalid";
+  if (!pq.attested) return "❌ ML-DSA-87 key not attested by the registry";
+  return "🔐 hybrid Ed25519 + ML-DSA-87 ✅ · key attested by the registry";
+}
 // C2PA (Content Credentials) is shown as information, never as proof (security-review.md):
 // anyone can forge a manifest pointing to any anchor; the verdict comes from VeriPress alone.
 function c2paRow(r) {
@@ -554,6 +561,7 @@ function showReport(r) {
       : r.zk ? (r.zk.proof_ok ? "✅ zero-knowledge proof valid" : "❌ zero-knowledge proof invalid")
       : r.signature_ok ? "✅ valid" : "❌ invalid"],
     ["Registry root", r.zk && `<code>${esc(short(r.zk.registry_root))}</code> · ${r.zk.root_valid_at_anchor ? "✅ in force when anchored" : "❌ not in force when anchored"}`],
+    ["Post-quantum", pqRow(r.post_quantum)],
     ["Signed between", timeWindow(r.time_window)],
     ["Anchored", a && esc(fmtTime(a.timestamp))],
     ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],

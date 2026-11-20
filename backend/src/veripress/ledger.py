@@ -479,33 +479,35 @@ class XrplLedger:
 
     # --- Phase 2: implemented by a later Dev B feature PR (task 6 in tasks-dev-b.md) ---
 
-    def credential_passkey(self, pubkey: str) -> str | None:
-        """Passkey hash the registry attested in the URI of the device's CAPTURE_DEVICE
-        credential (current state: an assertion is checked against the device as it is now)."""
+    def _credential_uri(self, pubkey: str, ctype: CredentialType, at_time: int | None = None) -> str | None:
+        """Hex URI of the `ctype` credential the registry created for this key's account: the
+        one in force at `at_time` (last CredentialCreate at or before it), or the latest one.
+        Read from the subject's history like the validity intervals, so a revocation does
+        not erase what was attested (photos signed before it keep verifying: whether the key
+        was trusted at anchor time is credential_type's job). None: never issued, bad key."""
         from xrpl.core.keypairs import derive_classic_address
-        from xrpl.models.requests import LedgerEntry
-        from xrpl.models.requests.ledger_entry import Credential
         from xrpl.utils import str_to_hex
 
         try:
             subject = derive_classic_address(pubkey)
         except Exception:
             return None
-        resp = self._request(
-            LedgerEntry(
-                credential=Credential(
-                    subject=subject, issuer=self.registry,
-                    credential_type=str_to_hex(CredentialType.CAPTURE_DEVICE.value),
-                ),
-                ledger_index="validated",
-            )
-        )
-        if not resp.is_successful():
-            return None
-        node = resp.result["node"]
-        if not node.get("Flags", 0) & LSF_ACCEPTED:
-            return None
-        return _passkey_from_uri(node.get("URI", ""))
+        return _attested_uri(self._history(subject), subject, self.registry, str_to_hex(ctype.value), at_time)
+
+    def credential_passkey(self, pubkey: str, at_time: int | None = None) -> str | None:
+        """Passkey hash the registry attested in the URI of the device's CAPTURE_DEVICE
+        credential (the one in force at `at_time`, else the latest)."""
+        uri = self._credential_uri(pubkey, CredentialType.CAPTURE_DEVICE, at_time)
+        return None if uri is None else uri_attestations(uri).get(PASSKEY)
+
+    def credential_pq(self, pubkey: str, at_time: int | None = None) -> str | None:
+        """sha256 hex of the ML-DSA-87 public key the registry attested in this key's
+        credential URI (CAPTURE_DEVICE, or AI_GENERATOR for the AI key), or None."""
+        for ctype in (CredentialType.CAPTURE_DEVICE, CredentialType.AI_GENERATOR):
+            uri = self._credential_uri(pubkey, ctype, at_time)
+            if uri is not None:
+                return uri_attestations(uri).get(MLDSA87)
+        return None
 
     # --- T0 lower bound: the signed manifest names the latest validated ledger -------------
 
@@ -543,25 +545,65 @@ class XrplLedger:
         return hit[1] if hit[0] == str(ledger_hash).upper() else None
 
 
-PASSKEY_URI_PREFIX = "passkey:sha256:"
+# Keys the registry attests in a credential URI, ";"-separated (interfaces.md):
+# "passkey=<b64u sha256>;mldsa87=<b64u sha256>" (43 chars each: 103 bytes). Base64url, not
+# hex: xrpl-py caps the URI at 256 hex characters (128 bytes), and two hex sha256 plus their
+# labels do not fit. The first format "passkey:sha256:<hex>" is still read.
+PASSKEY, MLDSA87 = "passkey", "mldsa87"
+PASSKEY_URI_PREFIX = PASSKEY + ":sha256:"
+MAX_URI_BYTES = 128
+
+
+def attestation_uri(passkey: str | None = None, mldsa87: str | None = None) -> str:
+    """Credential URI attesting a passkey and / or an ML-DSA-87 key, given their sha256 hex."""
+    import base64
+
+    parts = [(PASSKEY, passkey), (MLDSA87, mldsa87)]
+    uri = ";".join(f"{kind}={base64.urlsafe_b64encode(bytes.fromhex(h)).rstrip(b'=').decode()}"
+                   for kind, h in parts if h)
+    assert len(uri) <= MAX_URI_BYTES, uri
+    return uri
 
 
 def passkey_uri(passkey_sha256: str) -> str:
-    """Credential URI attesting a passkey (docs/interfaces.md)."""
-    return PASSKEY_URI_PREFIX + passkey_sha256.lower()
+    """Credential URI attesting a passkey only (docs/interfaces.md)."""
+    return attestation_uri(passkey=passkey_sha256)
 
 
-def _passkey_from_uri(uri_hex: str) -> str | None:
+def uri_attestations(uri_hex: str) -> dict[str, str]:
+    """{kind: sha256 hex} from a credential URI (hex), e.g. {"passkey": …, "mldsa87": …}.
+    Malformed parts are skipped; an unreadable URI gives {}."""
     from xrpl.utils import hex_to_str
 
     try:
-        uri = hex_to_str(uri_hex)
+        uri = hex_to_str(uri_hex) if uri_hex else ""
     except (ValueError, UnicodeDecodeError):
-        return None
-    if not uri.startswith(PASSKEY_URI_PREFIX):
-        return None
-    h = uri[len(PASSKEY_URI_PREFIX):].lower()
-    return h if len(h) == 64 and all(c in "0123456789abcdef" for c in h) else None
+        return {}
+    import base64
+    import binascii
+
+    out: dict[str, str] = {}
+    for part in uri.split(";"):
+        part = part.strip()
+        kind, sep, h = part.partition(":sha256:")  # first format: hex
+        if sep:
+            h = h.lower()
+            if kind and len(h) == 64 and all(c in "0123456789abcdef" for c in h):
+                out.setdefault(kind, h)
+            continue
+        kind, sep, b = part.partition("=")  # current format: base64url, no padding
+        if sep and kind and len(b) == 43:
+            try:
+                raw = base64.urlsafe_b64decode(b + "=")
+            except (binascii.Error, ValueError):
+                continue
+            if len(raw) == 32 and base64.urlsafe_b64encode(raw).rstrip(b"=").decode() == b:
+                out.setdefault(kind, raw.hex())
+    return out
+
+
+def _passkey_from_uri(uri_hex: str) -> str | None:
+    return uri_attestations(uri_hex).get(PASSKEY)
 
 
 def _compact(data: dict) -> str:
@@ -645,6 +687,24 @@ def _credential_intervals(entries: list[dict], subject: str, issuer: str, ctype_
     return out
 
 
+def _attested_uri(entries: list[dict], subject: str, issuer: str, ctype_hex: str, at_time: int | None = None) -> str | None:
+    """URI (hex, "" if none) of the last successful CredentialCreate issuer -> subject of this
+    type at or before `at_time` (all of them if None), from a chronological history; None if
+    there is none. Only the issuer can create its credentials, so the URI is the registry's."""
+    uri = None
+    for e in entries:
+        tx = e.get("tx_json") or e.get("tx") or {}
+        if not e.get("validated", False) or e.get("meta", {}).get("TransactionResult") != "tesSUCCESS":
+            continue
+        if (tx.get("TransactionType") != "CredentialCreate" or tx.get("Account") != issuer
+                or tx.get("Subject") != subject or str(tx.get("CredentialType", "")).upper() != ctype_hex.upper()):
+            continue
+        if at_time is not None and _close_time(e) > at_time:
+            break
+        uri = str(tx.get("URI", ""))
+    return uri
+
+
 def _valid_at(interval: Interval, t: int) -> bool:
     start, end, expiration = interval
     return start <= t and (end is None or t < end) and (expiration is None or t < expiration)
@@ -669,11 +729,6 @@ def _ledger_header(result: dict) -> tuple[int, str, int]:
     index = int(result.get("ledger_index") or led["ledger_index"])
     ledger_hash = str(result.get("ledger_hash") or led["ledger_hash"]).upper()
     return index, ledger_hash, ripple_time_to_posix(int(led["close_time"]))
-
-    # --- Hybrid post-quantum key attestation — TODO Dev B ---
-
-    def credential_pq(self, pubkey: str) -> str | None:
-        raise NotImplementedError("Dev B: parse 'mldsa87:sha256:<hex>' in the CAPTURE_DEVICE credential URI")
 
 
 def _close_time(result: dict) -> int:
