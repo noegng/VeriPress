@@ -191,7 +191,8 @@ def test_sign_result_json_matches_api_contract(photo, ledger, store):
     signed, _ = sign_image(photo, "device", ledger, store)
     j = signed.to_json()
     json.dumps(j)
-    assert set(j) == {"entry_id", "tx_hash", "explorer_url", "digest", "signer", "grid", "roots", "image_url"}
+    assert set(j) == {"entry_id", "tx_hash", "explorer_url", "digest", "signer", "grid", "roots", "image_url",
+                      "anonymous", "passkey", "pending", "meta_claims"}  # phase 2
     assert j["image_url"] == f"/api/files/{signed.entry_id}.png"
     assert j["digest"] == signed.manifest.digest()
     assert set(j["roots"]) == {"exact", "robust"}

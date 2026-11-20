@@ -26,6 +26,9 @@ import hashlib
 import io
 import json
 import os
+import secrets
+import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
@@ -34,11 +37,11 @@ import numpy as np
 from PIL import Image
 
 from .tiling import Grid
-from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
+from .commitment import Disclosure, Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
 from . import c2pa_embed, metadata, watermark, zk
-from .signing import keys_dir, load_key, verify_signature
+from .signing import keys_dir, load_key, verify_signature, verify_webauthn
 from .store import Entry, Store
 
 Signer = Literal["device", "ai"]  # demo keys in keys/device.json, keys/ai.json (written by Dev B's setup script)
@@ -60,6 +63,7 @@ class SignResult:
     entry_id: str
     anchor: Anchor
     manifest: Manifest
+    meta_claims: list[dict] = field(default_factory=list)
 
     def to_json(self) -> dict:
         """Shape: docs/interfaces.md "POST /api/sign"."""
@@ -73,6 +77,11 @@ class SignResult:
             "grid": {"cols": g.cols, "rows": g.rows, "tile": g.tile},
             "roots": {"exact": self.manifest.exact_root, "robust": self.manifest.robust_root},
             "image_url": f"/api/files/{self.entry_id}.png",
+            # phase 2 (interfaces.md § Phase 2)
+            "anonymous": self.manifest.anonymous,
+            "passkey": self.manifest.passkey is not None,
+            "pending": not self.anchor.validated,
+            "meta_claims": self.meta_claims,
         }
 
 
@@ -155,6 +164,62 @@ def _anonymous_registry(signer: Signer) -> tuple[dict, list[list[str]], int]:
         raise ValueError("this device is not in the anonymous registry") from e
 
 
+@dataclass
+class _Prepared:
+    """A committed, not yet anchored manifest (waits for its signature / proof)."""
+    rgb: np.ndarray  # published pixels (watermarked)
+    manifest: Manifest
+    disclosure: Disclosure
+    capture: metadata.Capture | None
+    salt: str | None
+    created: float = field(default_factory=time.monotonic)
+
+
+def _prepare(
+    rgb: np.ndarray, op: str, signer_pubkey: str, ledger: Ledger | None, store: Store,
+    parent: str | None = None, exif: bytes | None = None, anonymous: bool = False, passkey: str | None = None,
+) -> _Prepared:
+    if parent is not None and (store.get(parent) is None or (ledger is not None and ledger.fetch_anchor(parent) is None)):
+        raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
+    wm_id, original = b"", None
+    if watermark.enabled():
+        wm_id, original = os.urandom(8), rgb
+        rgb = watermark.embed(rgb, wm_id)  # exact tree covers the watermarked pixels
+    # robust tree covers both versions: the gallery original must verify too
+    manifest, disclosure = commit(rgb, os.urandom(32), original=original)
+    manifest.wm_id = wm_id.hex()
+    manifest.signer = "" if anonymous else signer_pubkey
+    manifest.anonymous = anonymous
+    manifest.passkey = passkey
+    manifest.op = op if op == "ai_generate" else ("edit" if parent else "capture")
+    manifest.parent = parent
+    manifest.t0 = _latest_ledger(ledger)
+    capture = metadata.read_capture(exif)
+    salt = os.urandom(31).hex() if capture else None  # never stored: only the claims are published
+    if capture:
+        manifest.meta_commitment = zk.commit_meta(capture.time, capture.lat_e6, capture.lon_e6, salt)
+    return _Prepared(rgb, manifest, disclosure, capture, salt)
+
+
+def _publish(prep: _Prepared, anchor: Anchor, store: Store, bundle: dict | None = None) -> tuple[SignResult, bytes]:
+    manifest, digest = prep.manifest, prep.manifest.digest()
+    png = _png(prep.rgb)
+    if c2pa_embed.enabled():  # Content Credentials pointing to the anchor (metadata only, same pixels)
+        png = c2pa_embed.embed(png, anchor.tx_hash, digest, manifest.op, anchor.explorer_url)
+    store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, prep.disclosure, phash(prep.rgb)), png)
+    if bundle is not None:
+        store.put_bundle(anchor.tx_hash, bundle)
+    claims = []
+    if prep.capture:
+        cap = prep.capture
+        made = metadata.claims(cap)
+        store.put_meta(anchor.tx_hash, [
+            {"kind": c.kind, **zk.prove_meta(cap.time, cap.lat_e6, cap.lon_e6, prep.salt, c.bounds())} for c in made
+        ])
+        claims = [{"kind": c.kind, "label": c.label, "proof_ok": True} for c in made]
+    return SignResult(anchor.tx_hash, anchor, manifest, claims), png
+
+
 def sign_image(
     rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None,
     anonymous: bool = False, wait: bool = True, exif: bytes | None = None,
@@ -165,46 +230,89 @@ def sign_image(
     publishing the device key and signature (decisions.md Q2-Q4).
     `exif`: raw EXIF of the uploaded file; with a capture time + GPS, the manifest commits to
     them and day / ~10 km area claims are proven in zero knowledge (decisions.md Q16-Q17)."""
-    if parent is not None and (store.get(parent) is None or ledger.fetch_anchor(parent) is None):
-        raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
     if anonymous:
         bjj, pks, index = _anonymous_registry(signer)
     key = load_key(signer)
-    wm_id, original = b"", None
-    if watermark.enabled():
-        wm_id, original = os.urandom(8), rgb
-        rgb = watermark.embed(rgb, wm_id)  # exact tree covers the watermarked pixels
-    # robust tree covers both versions: the gallery original must verify too
-    manifest, disclosure = commit(rgb, os.urandom(32), original=original)
-    manifest.wm_id = wm_id.hex()
-    manifest.signer = "" if anonymous else key.public_key
-    manifest.anonymous = anonymous
-    manifest.op = "ai_generate" if signer == "ai" else ("edit" if parent else "capture")
-    manifest.parent = parent
-    manifest.t0 = _latest_ledger(ledger)
-    capture = metadata.read_capture(exif)
-    salt = os.urandom(31).hex() if capture else None  # never stored: only the claims are published
-    if capture:
-        manifest.meta_commitment = zk.commit_meta(capture.time, capture.lat_e6, capture.lon_e6, salt)
-    digest = manifest.digest()
+    prep = _prepare(rgb, "ai_generate" if signer == "ai" else "capture", key.public_key, ledger, store,
+                    parent=parent, exif=exif, anonymous=anonymous)
+    digest = prep.manifest.digest()
     bundle = None
     if anonymous:
         bundle = zk.prove_device(bjj["sk"], pks, index, digest)
         anchor = ledger.anchor_anonymous(digest, bundle["public"][0], _bundle_hash(bundle), wait=wait)
     else:
         anchor = ledger.anchor(digest, key.sign(digest), key.public_key, wait=wait)
-    png = _png(rgb)
-    if c2pa_embed.enabled():  # Content Credentials pointing to the anchor (metadata only, same pixels)
-        png = c2pa_embed.embed(png, anchor.tx_hash, digest, manifest.op, anchor.explorer_url)
-    store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, disclosure, phash(rgb)), png)
-    if bundle is not None:
-        store.put_bundle(anchor.tx_hash, bundle)
-    if capture:
-        store.put_meta(anchor.tx_hash, [
-            {"kind": c.kind, **zk.prove_meta(capture.time, capture.lat_e6, capture.lon_e6, salt, c.bounds())}
-            for c in metadata.claims(capture)
-        ])
-    return SignResult(anchor.tx_hash, anchor, manifest), png
+    return _publish(prep, anchor, store, bundle)
+
+
+# ---------------------------------------------------------------- passkey (WebAuthn) signing
+
+PASSKEY_PREP_TTL_S = 600
+_PREPS: dict[str, _Prepared] = {}
+_PREPS_LOCK = threading.Lock()
+
+
+def _passkey_registration() -> dict:
+    p = keys_dir() / "passkey.json"
+    if not p.exists():
+        raise ValueError("no passkey registered (keys/passkey.json): use 'Set up passkey' first")
+    return json.loads(p.read_text())
+
+
+def prepare_passkey_sign(
+    rgb: np.ndarray, store: Store, parent: str | None = None, exif: bytes | None = None, ledger: Ledger | None = None,
+) -> dict:
+    """Step 1: commit the image for the device whose passkey is registered; the manifest digest
+    is the WebAuthn challenge. Pass `ledger` to get the T0 lower bound and check `parent`."""
+    reg = _passkey_registration()
+    prep = _prepare(rgb, "capture", load_key("device").public_key, ledger, store,
+                    parent=parent, exif=exif, passkey=str(reg["public_key"]).lower())
+    prep_id = secrets.token_urlsafe(18)
+    now = time.monotonic()
+    with _PREPS_LOCK:
+        for k in [k for k, v in _PREPS.items() if now - v.created > PASSKEY_PREP_TTL_S]:
+            del _PREPS[k]
+        _PREPS[prep_id] = prep
+    return {"prep_id": prep_id, "challenge": prep.manifest.digest()}
+
+
+def complete_passkey_sign(
+    prep_id: str, assertion: dict, ledger: Ledger, store: Store, wait: bool = True,
+) -> tuple[SignResult, bytes]:
+    """Step 2: verify the WebAuthn assertion over the digest, check the registry attests this
+    passkey for the device, anchor, publish. KeyError: unknown / expired / used prep_id;
+    ValueError: invalid assertion or passkey not attested."""
+    with _PREPS_LOCK:
+        prep = _PREPS.pop(prep_id)  # single use, even if the assertion turns out invalid
+    if time.monotonic() - prep.created > PASSKEY_PREP_TTL_S:
+        raise KeyError(prep_id)
+    manifest, digest = prep.manifest, prep.manifest.digest()
+    verify_webauthn(assertion, digest, manifest.passkey)
+    if ledger.credential_passkey(manifest.signer) != _sha256_hex(manifest.passkey):
+        raise ValueError("this passkey is not attested by the registry for the device (setup_testnet.py --passkey)")
+    bundle = {k: assertion[k] for k in ("credential_id", "authenticator_data", "client_data_json", "signature", "public_key")}
+    anchor = ledger.anchor_passkey(digest, manifest.signer, _bundle_hash(bundle), wait=wait)
+    return _publish(prep, anchor, store, bundle)
+
+
+def _sha256_hex(hex_bytes: str | None) -> str:
+    return hashlib.sha256(bytes.fromhex(hex_bytes or "")).hexdigest()
+
+
+def _check_passkey(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledger: Ledger) -> tuple[bool, bool]:
+    """(assertion valid for this digest and the anchored bundle, passkey attested by the registry)."""
+    if bundle is None or _bundle_hash(bundle) != anchor.bundle_hash or not manifest.passkey:
+        return False, False
+    try:
+        verify_webauthn(bundle, manifest.digest(), manifest.passkey)
+        ok = True
+    except ValueError:
+        ok = False
+    try:
+        attested = ledger.credential_passkey(anchor.pubkey) == _sha256_hex(manifest.passkey)
+    except Exception:  # noqa: BLE001
+        attested = False
+    return ok, attested
 
 
 def _meta_claims(manifest: Manifest, stored: list[dict]) -> list[dict]:
@@ -224,8 +332,10 @@ def _meta_claims(manifest: Manifest, stored: list[dict]) -> list[dict]:
     return out
 
 
-def _latest_ledger(ledger: Ledger) -> dict | None:
+def _latest_ledger(ledger: Ledger | None) -> dict | None:
     """T0: latest validated ledger at signing time (None if the ledger cannot tell)."""
+    if ledger is None:
+        return None
     try:
         index, ledger_hash, _ = ledger.latest_validated()
     except Exception:  # noqa: BLE001 — not implemented / network: sign without a lower bound
@@ -284,11 +394,15 @@ def verify_image(
     if anchor is None:
         reason = f"Anchor transaction {entry.tx_hash} not found on the ledger"
         return Report(FinalVerdict.UNKNOWN, reason, found_by, entry.id, None, None, False, None), None
-    zk_check = None
+    zk_check, passkey_attested = None, None
+    is_passkey = bool(anchor.bundle_hash and not anchor.signature and not anchor.anonymous)
     if anchor.anonymous:
         zk_check = _check_anonymous(anchor, manifest, store.get_bundle(entry.tx_hash), ledger)
         sig_ok = zk_check["proof_ok"]
         credential = CredentialType.CAPTURE_DEVICE if zk_check["root_valid_at_anchor"] else None
+    elif anchor.bundle_hash and not anchor.signature:  # passkey (WebAuthn) signature
+        sig_ok, passkey_attested = _check_passkey(anchor, manifest, store.get_bundle(entry.tx_hash), ledger)
+        credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
     else:
         sig_ok = verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
         credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
@@ -313,6 +427,12 @@ def verify_image(
     elif anchor.anonymous and credential is None:
         verdict = FinalVerdict.UNKNOWN
         reason = "Device registry root used by the proof was not in force at anchor time"
+    elif is_passkey and not sig_ok:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Passkey (WebAuthn) assertion is invalid or does not cover this manifest"
+    elif is_passkey and not passkey_attested:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Passkey is not the one the registry attests for this device"
     elif not sig_ok:
         verdict = FinalVerdict.UNKNOWN
         reason = "Anchored signature does not verify against the signer key"
@@ -346,7 +466,9 @@ def verify_image(
             how = "match after recompression"
         who = (
             f"Signed anonymously by an accredited {credential.value} (zero-knowledge proof)"
-            if anchor.anonymous else f"Signed by a {credential.value} credential"
+            if anchor.anonymous
+            else f"Signed with a hardware passkey attested for a {credential.value} credential"
+            if is_passkey else f"Signed by a {credential.value} credential"
         )
         reason = f"{who}; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
@@ -364,6 +486,7 @@ def verify_image(
         anonymous=anchor.anonymous, zk=zk_check, credential_revoked_at=revoked_at,
         pending=not anchor.validated,
         time_window=_time_window(manifest, anchor, ledger),
+        passkey=is_passkey,
         # Claims describe the signed capture: only shown when the verdict ties this image to it.
         meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
     )

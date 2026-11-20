@@ -71,6 +71,14 @@ Les anciens ancrages Testnet et les anciens `store/` ne se vérifient plus : il 
 
 Contrat dans `interfaces.md` § « Fenêtre de temps ». À faire : `XrplLedger.latest_validated()` (requête `ledger`, `ledger_index="validated"` → index, hash, close time) et `ledger_close_time(index, hash)` (requête `ledger` à cet index ; renvoyer `None` si le hash diffère ou si le ledger n'est pas validé). Puis afficher `time_window` dans la page et sur `/v/<id>`. Tant que ce n'est pas fait, la signature se fait sans T0, et `t0_ok` vaut false.
 
+## Passkey côté serveur (Dev A, 20/11 ~17 h 30)
+
+`prepare_passkey_sign` / `complete_passkey_sign` sont fusionnés : tes routes fonctionnent pour de vrai. Deux choses de ton côté :
+1. Dans `/api/sign/passkey/prepare`, passer **`ledger=app.state.ledger`** à `prepare(...)`. Sans lui, pas de borne T0 et pas de vérification de l'ancrage du `parent`.
+2. J'ai modifié une ligne de `tests/test_api.py::test_passkey_signing_routes_…` : la réponse factice porte maintenant une passkey, car `SignResult.to_json()` renvoie la vraie valeur de `passkey` (+ `anonymous`, `pending`, `meta_claims`). Tes `setdefault` dans l'API peuvent être retirés.
+
+Origines WebAuthn acceptées : `VERIPRESS_WEBAUTHN_HOSTS` (défaut `localhost,127.0.0.1`, http accepté seulement pour ces deux hôtes). La vérification exige UP **et** UV (Touch ID). Un `prep_id` sert une seule fois et expire après 10 min.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. ~13 h — phase 1 :** script Testnet, `XrplLedger`, API (branchée sur le vrai pipeline), page (signer / vérifier, heatmap, masquage, arbre ↔ image, historique, lien public), retours de revue 1–7. Répétition complète en `xrpl` + filigrane : les 6 étapes passent.
