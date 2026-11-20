@@ -156,7 +156,7 @@ Memos XRPL :
 - ancrage anonyme : MemoType `veripress/v1`, MemoData `{"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}` ;
 - ancrage passkey : `{"d", "k": pubkey Ed25519 de l'appareil, "w": bundle_hash}` (sans `s`) ;
 - racine du registre : émise par le compte registre vers lui-même, MemoType `veripress/registry-root/v1`, MemoData `{"root": "…", "depth": 10, "n": nb_appareils}`. La racine en vigueur à l'instant T est la dernière publiée avant T.
-- Credential `CAPTURE_DEVICE` avec passkey : `URI` = hex de `"passkey:sha256:<hex>"`.
+- Credential `CAPTURE_DEVICE` avec passkey : `URI` = hex de `"passkey=<sha256 en base64url>"` (premier format `"passkey:sha256:<hex>"`, toujours lu). Voir § « Signature hybride post-quantique » pour l'URI combinée.
 
 Fichiers de clés (script de Dev B) : `keys/device.json` et `keys/ai.json` gagnent `"bjj": {"sk", "pk"}` (via `zk keygen`) ; `keys/registry_devices.json` = `{"pks": [[x, y], …]}`, dans l'ordre de l'arbre (appareils réels + ~20 fictifs).
 
@@ -254,7 +254,7 @@ N enregistrements signés, **une** transaction XRPL. La signature de chaque phot
 
 Comme la signature hybride ML-DSA-87 + RSA d'Apple Reference Image, avec ML-DSA natif dans `cryptography` ≥ 44 (FIPS 204).
 - Clés : `keys/<device|ai>.json["mldsa"] = {"public_key": hex brut (2 592 o), "private_pem": PKCS8 PEM}`.
-- Attestation par le registre : l'`URI` du Credential porte `mldsa87:sha256:<hex>`, séparé par `;` d'un éventuel `passkey:sha256:<hex>`, par exemple `passkey:sha256:ab…;mldsa87:sha256:cd…`.
+- Attestation par le registre : l'`URI` du Credential porte `mldsa87=<sha256 en base64url, 43 car.>`, séparé par `;` d'un éventuel `passkey=<…>`, par exemple `passkey=q6ur…;mldsa87=zc3N…` (103 octets). **Changement de Dev B** : le format hex `mldsa87:sha256:<hex>` prévu ne tient pas, car xrpl-py limite l'URI à 256 caractères hex (128 octets) et deux sha256 en hex avec leurs étiquettes font 159 octets. `credential_pq` / `credential_passkey` renvoient toujours le sha256 **hex**. L'attestation est lue dans l'historique (le `CredentialCreate` en vigueur), et non dans l'état actuel : une révocation n'efface pas la clé attestée, donc les photos hybrides signées avant restent 🟢. Paramètre facultatif `at_time` (côté `XrplLedger`) : l'attestation en vigueur à cet instant.
 - Ledger : `credential_pq(pubkey) -> sha256 hex | None` (Dev B pour `XrplLedger`).
 - Signature : si la clé ML-DSA de l'appareil est **attestée**, le manifeste signé contient `pq_pubkey_sha256`, et `store/<id>/pq.json = {alg: "ML-DSA-87", public_key, signature}` (4,6 Ko : trop gros pour le Memo de 1 Ko). Jamais en mode anonyme (la clé identifierait l'appareil). Clé non attestée → signature Ed25519 seule.
 - Vérification : un manifeste qui déclare la clé **exige** une signature ML-DSA valide et la clé attestée, sinon `unknown` (pas de rétrogradation). Nouvelle clé JSON `"post_quantum": {"alg", "signature_ok", "attested"} | null`. Le motif ajoute « hybrid post-quantum signature (Ed25519 + ML-DSA-87) ».
