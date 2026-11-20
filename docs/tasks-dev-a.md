@@ -33,6 +33,51 @@ Lire d'abord [`team-rules.md`](team-rules.md) et [`interfaces.md`](interfaces.md
 7. **WebAuthn côté serveur** : `prepare_passkey_sign` / `complete_passkey_sign`, vérification ECDSA P-256 de l'assertion (`authenticatorData ‖ sha256(clientDataJSON)`, challenge = digest), comparaison avec `credential_passkey`.
 8. **CID** / 9. **ancrage groupé** : si libre.
 
+## Retours de Dev B (20/11, soir)
+
+Constatés sur `main` à `b581731` (après #22 et #23) : `uv run python -m pytest` → 144 passent, 6 ignorés, **1 échec intermittent** (point 1). Les numéros de ligne correspondent à ce commit.
+
+1. **Test instable `test_revoked_credential_is_unknown`** (prioritaire, `tests/test_pipeline.py:74`).
+   - **Symptôme :** il échoue environ 1 fois sur 3 depuis #23. Reproduit : 3 lancements de `pytest tests/test_pipeline.py -k revoked_credential_is_unknown` donnent 1 échec, avec `REAL` au lieu de `UNKNOWN`.
+   - **Cause :** `sign_image` signe le manifeste C2PA *après* l'ancrage (`pipeline.py:194`). Le `ledger.revoke(keys["device"])` du test tombe donc souvent dans la seconde qui suit `anchor.timestamp`. Or, avec la révocation non rétroactive, `FakeLedger.credential_type` ne rejette que si `at_time >= revoked`. La photo, ancrée avant la révocation, sort alors 🟢, ce qui est le comportement voulu.
+   - **Diagnostic :** le code est correct ; c'est le test qui suppose que la signature et la révocation tombent dans la même seconde.
+   - **Correctif proposé :** dater la révocation explicitement, par exemple `ledger.revoke(keys["device"], at=ledger.anchors[signed.entry_id].timestamp)` (révoquée dès l'ancrage → ⚪). C'est le seul `revoke(...)` sans `at=` dans `tests/`.
+2. **Passkey : ce qu'attend l'API** (#20, déjà fusionné ; c'est le dernier maillon avant la démo Touch ID).
+   - **Statut actuel :** `/api/sign/passkey/prepare` et `/complete` répondent 503 tant que `pipeline.prepare_passkey_sign` et `pipeline.complete_passkey_sign` n'existent pas (`api.py:380`, `_pipeline_fn`). Le contrat est dans `interfaces.md` l. 168-170. Les précisions ci-dessous viennent du code de la page et de l'API.
+   - **Appels :**
+     - `prepare(rgb, store, parent, exif=exif)` → `{"prep_id", "challenge": digest_hex}`.
+     - `complete(prep_id, assertion, ledger, store)` → `(SignResult, png)`, sans argument `wait` : c'est donc la valeur par défaut du pipeline qui s'applique.
+   - **Erreurs converties par l'API :** `KeyError` → 404 (prep_id inconnu ou expiré), `ValueError` → 422 (assertion invalide, passkey non attestée, parent inconnu), `RuntimeError` → 502 (transaction rejetée).
+   - **`assertion` envoyé par la page :**
+     - `credential_id`, `authenticator_data`, `client_data_json` et `signature` sont en base64url **sans padding** ;
+     - `signature` est la signature ECDSA au format **DER** renvoyé par WebAuthn, que `cryptography` accepte telle quelle ;
+     - **attention, `public_key` est la clé SPKI DER en base64url, pas le SEC1 hex.** Pour la comparer à `ledger.credential_passkey(clé_ed25519_appareil)`, la convertir en SEC1 non compressé puis en calculer le sha256, comme dans `api.py:357` : `load_der_public_key(...).public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)`. Le `credential_id` doit correspondre à celui de `keys/passkey.json`.
+   - **À vérifier dans `complete` :**
+     - message signé = `authenticator_data ‖ sha256(client_data_json)` ;
+     - dans `client_data_json` : `type == "webauthn.get"`, et `challenge` égal au base64url sans padding de `bytes.fromhex(digest)` ;
+     - drapeau UV présent : bit `0x04` de l'octet 32 d'`authenticator_data`, puisque la page demande `userVerification: "required"` ;
+     - ne pas figer l'origine (`http://localhost:<port>`).
+   - **Ancrage :** `ledger.anchor_passkey(digest, clé_ed25519_appareil, bundle_hash, wait)`.
+     - `k` est la clé Ed25519 de l'appareil (`keys/device.json`), celle dont le Credential porte l'URI `passkey:sha256:…`.
+     - `bundle_hash` est le sha256 du paquet (assertion et clé), stocké avec `store.put_bundle`.
+     - En vérification, `report.passkey` contient la clé SEC1 hex (`interfaces.md` l. 129).
+   - **Pour tester sans navigateur :** générer une clé P-256 avec `cryptography`, puis fabriquer à la main `authenticator_data` (rpIdHash 32 o ‖ flags `0x05` ‖ compteur 4 o) et `client_data_json`. `keys/passkey.json` contient aujourd'hui une clé **de test** déjà attestée sur Testnet ; elle sera remplacée par la vraie passkey Touch ID.
+   - **Limite connue (côté Dev B) :** `credential_passkey` lit l'URI *actuelle* du Credential. Si on atteste une autre passkey plus tard, les anciennes photos signées par passkey ne se vérifieraient plus. C'est sans effet pour la démo.
+3. **C2PA invisible à la vérification** (suggestion pour la démo, à trancher).
+   - **Constat :** le manifeste est écrit (`pipeline.py:194`) mais jamais relu. `verify_image` reçoit des pixels et ne peut donc pas le lire.
+   - **Conséquence :** le moment du pitch prévu en Q20 (« C2PA disparaît après WhatsApp, VeriPress retrouve la provenance ») demande aujourd'hui un lecteur C2PA externe.
+   - **Proposition de Dev B, sans toucher au pipeline :** dans `/api/verify`, appeler `c2pa_embed.read(data)` sur les octets bruts envoyés, puis ajouter un champ `c2pa` à la réponse (`null`, ou le dict de `read` plus `matches_anchor: tx_hash == report.tx_hash`). La page afficherait alors :
+     - « Manifeste C2PA présent → même ancre XRPL (certificat de test) » ;
+     - ou « Manifeste C2PA absent (supprimé au partage) — provenance retrouvée par le filigrane ».
+   - **À décider par Dev A :** OK pour le faire dans `api.py`, ou préférence pour un champ dans `VerifyReport` ? C'est une extension du contrat JSON de `/api/verify`, qui sera annoncée dans la PR.
+4. **`cli demo` plante quand `VERIPRESS_WATERMARK=0`** (mineur, utile pour une démo de secours sans les modèles TrustMark).
+   - **Cause :** sans filigrane, `manifest.wm_id == ""`. Le scénario 5 (`cli.py:171-172`) appelle quand même `watermark.embed(..., bytes.fromhex(""))`, ce qui lève `ValueError: wm_id must be 8 bytes`.
+   - **Effet sur les tests :** `test_cli_demo` échoue si la variable est exportée dans le shell.
+   - **Correctif proposé :** sauter le scénario 5 (ou le marquer « skipped ») quand `not watermark.enabled()`.
+5. **Pour la démo** (info, aucune action demandée).
+   - Les PNG signés avant #23 ne portent pas de manifeste C2PA. Après le gel, **re-signer les photos de démo sur le `main` final**, puis refaire la copie WhatsApp à partir du nouveau PNG signé.
+   - Si Testnet est remis à zéro, relancer d'abord `setup_testnet.py`.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **20/11 — ZK B fait** : circuit `meta.circom` (1 295 contraintes : engagement Poseidon de la date + du GPS, appartenance à des intervalles), commandes `commit-meta`, `prove-meta` et `verify-meta`, `metadata.py` (EXIF → `Capture`, affirmations jour / zone de 10 km, libellés recalculés à partir des entrées publiques vérifiées), `sign_image(exif=…)`, `meta_claims` dans le rapport. Sur IMG_4110 : « 20 Nov 2026 » et « ≈ Bari (10 km) » prouvés, ni l'heure ni le GPS exacts publiés. Aussi fait : révocation datée dans le rapport, `pending`, `verify_stored` (PR #10). **Dev B** : passer `exif=metadata.exif_from_upload(data)` dans `/api/sign`, afficher `meta_claims`.
