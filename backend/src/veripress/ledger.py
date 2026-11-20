@@ -104,6 +104,15 @@ class Ledger(Protocol):
         by the registry before that instant), or None."""
         ...
 
+    def latest_validated(self) -> tuple[int, str, int]:
+        """(ledger_index, ledger_hash, close_time unix) of the latest validated ledger — T0 lower
+        bound: a ledger hash cannot be known before that ledger closes."""
+        ...
+
+    def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None:
+        """Close time of validated ledger `ledger_index` if its hash is `ledger_hash`, else None."""
+        ...
+
 
 class FakeLedger:
     """In-memory ledger for tests and offline dev."""
@@ -114,6 +123,7 @@ class FakeLedger:
         self.revoked_at: dict[str, int] = {}
         self.passkeys: dict[str, str] = {}
         self.registry_roots: list[tuple[int, str]] = []  # (published at, root), in order
+        self.ledgers: dict[int, tuple[str, int]] = {}  # index -> (hash, close time)
 
     def issue(self, pubkey: str, ctype: CredentialType, passkey_hash: str | None = None) -> None:
         self.credentials[pubkey] = ctype
@@ -175,6 +185,21 @@ class FakeLedger:
     def registry_root_at(self, at_time: int) -> str | None:
         roots = [r for t, r in self.registry_roots if t <= at_time]
         return roots[-1] if roots else None
+
+    def _ledger(self) -> tuple[int, str, int]:
+        """Fake ledger sequence: one ledger per anchor, starting at 1000."""
+        index = 1000 + len(self.anchors)
+        if index not in self.ledgers:
+            h = hashlib.sha256(f"fake-ledger-{index}".encode()).hexdigest().upper()
+            self.ledgers[index] = (h, int(time.time()))
+        return index, *self.ledgers[index]
+
+    def latest_validated(self) -> tuple[int, str, int]:
+        return self._ledger()
+
+    def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None:
+        h, t = self.ledgers.get(ledger_index, (None, None))
+        return t if h is not None and h == ledger_hash.upper() else None
 
 
 MEMO_TYPE = "veripress/v1"
@@ -564,6 +589,14 @@ def _revoked_at(intervals_by_type, now: int) -> int | None:
         return None
     ends = [iv[1] for iv in latest if iv[1] is not None]
     return max(ends) if ends else None
+
+    # --- T0 lower bound (after the track slides) — TODO Dev B ---
+
+    def latest_validated(self) -> tuple[int, str, int]:
+        raise NotImplementedError("Dev B: `ledger` request, ledger_index='validated'")
+
+    def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None:
+        raise NotImplementedError("Dev B: `ledger` request at ledger_index, compare ledger_hash")
 
 
 def _close_time(result: dict) -> int:

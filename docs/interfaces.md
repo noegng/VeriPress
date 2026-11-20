@@ -202,3 +202,18 @@ Exceptions : `ValueError` = requête invalide (→ 422 dans l'API) ; `KeyError` 
 - `pending: true` : le verdict est provisoire, et `reason` commence par « Anchor pending validation ».
 - En mode anonyme, `anchor.signer` vaut `""`.
 - Le libellé de zone donne le centre de la boîte arrondi à 0,01° (sans géocodage inverse) ; un nom de ville est une option côté page.
+
+## Fenêtre de temps [T0, T1] (ajout après les slides de la piste 1)
+
+Comme les jetons T0 / T1 d'Apple Reference Image, mais décentralisé :
+- **T0** : au moment de signer, le manifeste signé contient `t0 = {"ledger_index", "ledger_hash"}`, le dernier ledger XRPL validé. Un hash de ledger est imprévisible avant la clôture de ce ledger, donc l'image a été signée **après** T0.
+- **T1** : l'heure de clôture du ledger de l'ancrage.
+
+Ledger (Dev B pour `XrplLedger` ; `FakeLedger` déjà fait par Dev A) :
+```python
+def latest_validated(self) -> tuple[int, str, int]: ...                       # (index, hash, close_time unix)
+def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None: ...  # None si le hash ne correspond pas
+```
+Si `latest_validated` lève une exception (non implémenté, réseau), on signe sans T0.
+
+`/api/verify` : nouvelle clé `"time_window": {"not_before": unix | null, "not_after": unix, "ledger_index": int | null, "t0_ok": bool}` (`null` quand rien n'est trouvé). Affichage proposé : « signée entre 14:02:31 et 14:02:52 UTC », avec le lien vers le ledger T0.

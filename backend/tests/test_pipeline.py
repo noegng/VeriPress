@@ -168,7 +168,8 @@ def test_report_json_matches_api_contract(photo, ledger, store):
     assert set(j) == {"verdict", "reason", "found_by", "entry_id", "anchor", "credential",
                       "signature_ok", "tiles", "history", "heatmap_png_b64",
                       # phase 2 (interfaces.md § Phase 2)
-                      "anonymous", "zk", "credential_revoked_at", "passkey", "meta_claims", "pending"}
+                      "anonymous", "zk", "credential_revoked_at", "passkey", "meta_claims", "pending",
+                      "time_window"}
     assert j["anonymous"] is False and j["zk"] is None and j["meta_claims"] == [] and j["pending"] is False
     assert j["verdict"] == "real" and j["credential"] == "CAPTURE_DEVICE" and j["found_by"] == "tx_hash"
     assert set(j["anchor"]) == {"tx_hash", "timestamp", "explorer_url", "signer"}
