@@ -35,3 +35,15 @@ def test_demo_uses_a_real_ai_image_when_given(tmp_path):
     assert summary["6_ai"]["verdict"] == "ai"
     assert (out / "6_ai.png").exists()
     assert Image.open(out / "6_ai.png").size == Image.open(ai).size
+
+
+def test_demo_runs_without_the_watermark_models(tmp_path, monkeypatch):
+    """Backup demo when TrustMark is unavailable: the copied-watermark scenario is skipped."""
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")
+    src = tmp_path / "photo.png"
+    Image.fromarray(photo_like()).save(src)
+    out = tmp_path / "demo"
+    assert main(["demo", str(src), "-o", str(out)]) == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["5_copied_watermark"] == {"skipped": "watermark disabled (VERIPRESS_WATERMARK=0)"}
+    assert summary["3_whatsapp"]["verdict"] == "real" and summary["3_whatsapp"]["found_by"] == "phash"
