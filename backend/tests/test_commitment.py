@@ -118,3 +118,47 @@ def test_tile_size_adapts_to_photo_size_so_shared_copies_verify():
     res = verify(jpeg(rescale(big, 1280 / 3840), 55), m, d)
     assert TileStatus.CHANGED not in res.statuses
     assert commit(photo_like(), SEED)[0].tile == 32  # small images keep the 32 px floor
+
+
+def test_iphone_heic_photo_loads_with_orientation(tmp_path, photo):
+    import pillow_heif
+    from PIL import Image
+
+    from tileproof.tiling import load_rgb
+
+    pillow_heif.from_pillow(Image.fromarray(photo)).save(tmp_path / "IMG_0001.HEIC", quality=95)
+    rgb = load_rgb(tmp_path / "IMG_0001.HEIC")
+    assert rgb.shape == photo.shape
+
+
+def test_display_p3_photo_is_read_in_srgb_like_its_shared_copy(tmp_path, photo):
+    """Real WhatsApp finding: iPhone originals are Display P3, shared copies are untagged sRGB."""
+    from pathlib import Path
+
+    from PIL import Image, ImageCms
+
+    from tileproof.tiling import load_rgb
+
+    p3 = ImageCms.ImageCmsProfile(str(Path(__file__).parent / "data" / "display_p3.icc"))
+    srgb = ImageCms.createProfile("sRGB")
+    p3_pixels = ImageCms.profileToProfile(Image.fromarray(photo), srgb, p3, outputMode="RGB")
+    p3_pixels.save(tmp_path / "p3.png", icc_profile=p3.tobytes())
+    back = load_rgb(tmp_path / "p3.png").astype(int)
+    assert np.abs(back - photo).mean() < 1.5
+    m, d = commit(load_rgb(tmp_path / "p3.png"), SEED)
+    assert verify(jpeg(photo, 80), m, d).verdict == Verdict.RECOMPRESSED
+
+
+def test_thin_dark_lines_on_bright_background_survive_bicubic_downscale():
+    """Real WhatsApp finding (railing on a white wall): resampling overshoot is clipped at 255."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (2400, 1800), (250, 250, 248))
+    d = ImageDraw.Draw(img)
+    for x in range(0, 2400, 23):
+        d.line((x, 0, x + 40, 1800), fill=(15, 15, 15), width=3)
+    rgb = np.asarray(img)
+    m, dis = commit(rgb, SEED)
+    small = Image.fromarray(rgb).resize((1200, 900), Image.Resampling.BICUBIC)  # 2x: tiles keep ~32 px
+    res = verify(jpeg(np.asarray(small), 70), m, dis)
+    assert TileStatus.CHANGED not in res.statuses

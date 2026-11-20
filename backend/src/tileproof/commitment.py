@@ -250,7 +250,7 @@ _COLORS = {
 def heatmap(rgb: np.ndarray, manifest: Manifest, result: VerifyResult) -> Image.Image:
     """Overlay tile statuses on the (resized) received image."""
     grid = manifest.grid
-    base = Image.fromarray(resize_to(rgb, grid.width, grid.height)).convert("RGBA")
+    base = Image.fromarray(np.clip(resize_to(rgb, grid.width, grid.height), 0, 255).astype(np.uint8)).convert("RGBA")
     overlay = np.zeros((grid.height, grid.width, 4), dtype=np.uint8)
     for i, s in enumerate(result.statuses):
         x0, y0, x1, y1 = grid.bounds(i)
