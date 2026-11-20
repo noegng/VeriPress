@@ -15,6 +15,7 @@
 <meta name="twitter:title" content="__TITLE__">
 <meta name="twitter:description" content="__DESCRIPTION__">
 <meta name="twitter:image" content="__IMAGE_URL__">
+<link rel="stylesheet" href="/assets/proofs.css">
 <style>
   :root {
     --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
@@ -50,6 +51,15 @@
   .btn { border: 0; background: var(--accent-btn); color: #fff; font: inherit; font-weight: 600; padding: 11px 16px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
   .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
   .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  main { max-width: 1080px; }
+  .grid { display: grid; gap: 22px; }
+  .grid .stage { margin-top: 0; align-self: start; }
+  .reason { margin: 0 0 14px; font-size: 15px; color: var(--muted); }
+  details.tech { margin-top: 8px; font-size: 14px; } details.tech > summary { cursor: pointer; color: var(--muted); }
+  .btn .vp-i { width: 18px; height: 18px; vertical-align: -3px; }
+  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (min-width: 900px) { .grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -59,81 +69,66 @@
     <span class="tag">Public provenance record · read-only</span>
   </header>
   <div class="card">
-    <div class="badge" id="badge"><span class="dot" id="dot"></span><div><strong id="title"></strong><small id="reason"></small></div></div>
-    <div class="stage">
-      <img id="photo" src="__IMAGE_PATH__" alt="Published image">
-      <img class="overlay" id="heatmap" alt="" hidden>
-    </div>
-    <div id="claimsBox" hidden>
-      <h2>Proven claims <small>— zero-knowledge, exact time and place stay private</small></h2>
-      <ul class="claims" id="claims"></ul>
-    </div>
-    <dl id="info"></dl>
-    <div id="historyBox" hidden>
-      <h2>Version history</h2>
-      <ol class="history" id="history"></ol>
+    <div class="grid">
+      <div class="stage">
+        <img id="photo" src="__IMAGE_PATH__" alt="Published image">
+        <img class="overlay" id="heatmap" alt="" hidden>
+        <div id="stamp"></div>
+      </div>
+      <div>
+        <p class="reason" id="reason"></p>
+        <div id="chain"></div>
+        <details class="tech"><summary>Technical details</summary><dl id="info"></dl></details>
+        <div id="historyBox" hidden>
+          <h2>Version history</h2>
+          <ol class="history" id="history"></ol>
+        </div>
+      </div>
     </div>
     <div class="row">
-      <button class="btn" id="copy" hidden>🔗 Copy link</button>
-      <a class="btn ghost" href="__IMAGE_PATH__" download>⬇ Download image</a>
+      <button class="btn" id="copy" hidden><svg class="vp-i" aria-hidden="true"><use href="#vp-link"/></svg> Copy link</button>
+      <a class="btn ghost" href="__IMAGE_PATH__" download><svg class="vp-i" aria-hidden="true"><use href="#vp-download"/></svg> Download image</a>
       <a class="btn ghost" href="/">Verify your own image</a>
     </div>
     <p class="note">This page re-verifies the stored image against its XRPL anchor each time it is opened.</p>
   </div>
 </main>
 <script id="report" type="application/json">__REPORT_JSON__</script>
+<script src="/assets/proofs.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const r = JSON.parse($("report").textContent);
-const V = { real: ["🟢", "Real", "v-real"], edited: ["🟠", "Edited", "v-edited"], ai: ["🔵", "AI-generated", "v-ai"], unknown: ["⚪", "Unknown", "v-unknown"] };
-const [dot, label, cls] = V[r.verdict] || V.unknown;
-function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-function short(h) { return h && h.length > 20 ? h.slice(0, 10) + "…" + h.slice(-6) : h; }
+const { esc, short } = VeriProof;
+VeriProof.sprite();
 function fmtTime(ts) { return ts == null ? "—" : new Date(ts * 1000).toLocaleString(); }
 const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(r.anchor?.explorer_url || "");
 function txLink(hash, url) {
   const code = `<code>${esc(short(hash))}</code>`;
-  return onChain ? `<a href="${esc(url || "https://testnet.xrpl.org/transactions/" + hash)}" target="_blank" rel="noopener">${code} ↗</a>` : code;
+  return onChain ? `<a href="${esc(VeriProof.safeUrl(url || "https://testnet.xrpl.org/transactions/" + hash))}" target="_blank" rel="noopener">${code}${VeriProof.icon("external", "vp-i vp-ext")}</a>` : code;
 }
-// [T0, T1]: signed after ledger T0 closed (its hash is in the signed manifest), anchored at T1.
-function timeWindow(tw) {
-  if (!tw || tw.ledger_index == null) return null;
-  const n = Number(tw.ledger_index);
-  const led = onChain ? `<a href="https://testnet.xrpl.org/ledgers/${n}" target="_blank" rel="noopener">ledger #${n} ↗</a>` : `ledger #${n}`;
-  if (!tw.t0_ok) return `⚠️ T0 ${led} not confirmed by the ledger`;
-  return `🕐 ${esc(fmtTime(tw.not_before))} → ${esc(fmtTime(tw.not_after))} (${Math.max(0, tw.not_after - tw.not_before)} s) · after ${led}`;
-}
-$("badge").className = "badge " + cls; $("dot").textContent = dot;
-$("title").textContent = r.verdict === "real" && r.anonymous ? "Real — accredited device (anonymous)" : r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)" : label;
-$("reason").textContent = r.pending ? "⏳ " + r.reason : r.reason;
+// The verdict stamped on the photo, then each guarantee as a link of the chain (proofs.js).
+$("stamp").innerHTML = VeriProof.stamp(r);
+$("chain").innerHTML = VeriProof.chain(r, { onchain: onChain });
+$("reason").textContent = r.reason || "";
 // Fast anchoring: provisional verdict, reload until the anchor is validated on the ledger.
 if (r.pending) setTimeout(() => location.reload(), 5000);
 if (r.heatmap_png_b64) { $("heatmap").src = "data:image/png;base64," + r.heatmap_png_b64; $("heatmap").hidden = false; }
-const claims = r.meta_claims || [];
-$("claimsBox").hidden = !claims.length;
-$("claims").innerHTML = claims.map((c) => `<li>${c.proof_ok ? "✅" : "❌"} ${esc({ day: "Taken on", area: "Taken within" }[c.kind] || c.kind)} <b>${esc(c.label)}</b></li>`).join("");
 const a = r.anchor;
 $("info").innerHTML = [
-  ["Credential", r.credential && esc(r.credential)],
-  ["Device status", r.credential_revoked_at && `⚠️ revoked since ${esc(fmtTime(r.credential_revoked_at))} (after this image was anchored)`],
-  ["Signature", r.zk ? (r.zk.proof_ok ? "✅ zero-knowledge proof valid" : "❌ zero-knowledge proof invalid") : r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
-  ["Signer", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "🕶️ anonymous accredited device" : null)],
-  ["Post-quantum", r.post_quantum && (r.post_quantum.signature_ok && r.post_quantum.attested
-    ? "🔐 hybrid Ed25519 + ML-DSA-87 ✅ · key attested by the registry" : "❌ ML-DSA-87 signature not verified")],
-  ["Signed between", timeWindow(r.time_window)],
-  ["Anchored", a && esc(fmtTime(a.timestamp))],
   ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
-  ["Batch", r.batch && `photo ${Number(r.batch.index) + 1} of ${Number(r.batch.size)} in one transaction · Merkle receipt ✅`],
+  ["Anchored", a && esc(fmtTime(a.timestamp))],
+  ["Signer key", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "hidden (anonymous)" : null)],
+  ["Registry root", r.zk && `<code>${esc(short(r.zk.registry_root))}</code>`],
   ["Disclosure CID", r.disclosure_cid && `<code title="${esc(r.disclosure_cid)}">${esc(short(r.disclosure_cid))}</code>`],
-  ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.counts.exact + r.tiles.counts.robust}/${r.tiles.statuses.length} match`)],
+  ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
 ].filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
-const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", develop: "🎞️ Developed from the signed RAW", ai_generate: "🤖 AI-generated" };
+const OPS = { capture: "Captured", edit: "Signed edit", develop: "Developed from the signed RAW", ai_generate: "AI-generated" };
 const hist = r.history || [];
 $("historyBox").hidden = hist.length < 2;
-$("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))} · ${txLink(h.tx_hash)}${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
+$("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))} · ${txLink(h.tx_hash)}${h.verified ? "" : " · not verified"}</li>`).join("");
 if (navigator.clipboard) {
   $("copy").hidden = false;
-  $("copy").addEventListener("click", async () => { await navigator.clipboard.writeText(location.href); $("copy").textContent = "✅ Link copied"; });
+  $("copy").addEventListener("click", async () => { await navigator.clipboard.writeText(location.href); $("copy").lastChild.textContent = " Link copied"; });
 }
 </script>
 </body>
