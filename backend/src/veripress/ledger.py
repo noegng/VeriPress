@@ -345,6 +345,14 @@ class XrplLedger:
         return self._remember(Anchor(tx_hash, digest, "", "", ts, EXPLORER + tx_hash, validated=ok,
                                      anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash))
 
+    def anchor_batch(self, root: str, count: int, wait: bool = True) -> Anchor:
+        """Aggregated anchoring: one Payment for the Merkle root of `count` signed records (memo
+        {"b", "n"}). Each photo's receipt in the store proves its leaf is in this root."""
+        if int(count) <= 0:
+            raise ValueError("a batch anchors at least one record")
+        tx_hash, ts, ok = self._submit_anchor({"b": root, "n": int(count)}, wait)
+        return self._remember(Anchor(tx_hash, root, "", "", ts, EXPLORER + tx_hash, validated=ok, batch_size=int(count)))
+
     def anchor_passkey(self, digest: str, pubkey: str, bundle_hash: str, wait: bool = True) -> Anchor:
         tx_hash, ts, ok = self._submit_anchor({"d": digest, "k": pubkey, "w": bundle_hash}, wait)
         return self._remember(Anchor(tx_hash, digest, "", pubkey, ts, EXPLORER + tx_hash, validated=ok,
@@ -566,10 +574,13 @@ def _memo_json(tx: dict, memo_type: str) -> dict | None:
 
 
 def _anchor_from_memo(data: dict, tx_hash: str, timestamp: int) -> Anchor | None:
-    """The three veripress/v1 memo shapes (docs/interfaces.md):
-    named {"d","s","k"} · anonymous {"d","a":1,"r","h"} · passkey {"d","k","w"}."""
+    """The four veripress/v1 memo shapes (docs/interfaces.md): named {"d","s","k"} ·
+    anonymous {"d","a":1,"r","h"} · passkey {"d","k","w"} · batch {"b": root, "n": count}."""
     url = EXPLORER + tx_hash
     try:
+        if "b" in data:
+            count = int(data["n"])
+            return Anchor(tx_hash, str(data["b"]), "", "", timestamp, url, batch_size=count) if count > 0 else None
         digest = str(data["d"])
         if data.get("a") == 1:
             return Anchor(tx_hash, digest, "", "", timestamp, url, anonymous=True,
@@ -577,7 +588,7 @@ def _anchor_from_memo(data: dict, tx_hash: str, timestamp: int) -> Anchor | None
         if "w" in data:
             return Anchor(tx_hash, digest, "", str(data["k"]), timestamp, url, bundle_hash=str(data["w"]))
         return Anchor(tx_hash, digest, str(data["s"]), str(data["k"]), timestamp, url)
-    except KeyError:
+    except (KeyError, TypeError, ValueError):  # missing field, or a non-integer batch count
         return None
 
 
