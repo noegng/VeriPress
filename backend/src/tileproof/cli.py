@@ -3,7 +3,7 @@
   tileproof commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
   tileproof verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   tileproof redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
-  tileproof demo IMAGE -o OUT_DIR              -> the six demo scenarios offline (FakeLedger)
+  tileproof demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the six demo scenarios offline (FakeLedger)
   tileproof calibrate ORIG_DIR SHARED_DIR -o OUT.json
                                                -> robust-tile / phash margins on real shared copies
                                                   (same file stem in both dirs, e.g. IMG_1.jpg / IMG_1.jpeg)
@@ -153,7 +153,8 @@ def cmd_demo(a: argparse.Namespace) -> int:
     wm_id = bytes.fromhex(original.manifest.wm_id)
     check("5_copied_watermark", _jpeg(embed(np.ascontiguousarray(np.rot90(src, 2)), wm_id), 85))
 
-    _, ai_png = sign_image(np.ascontiguousarray(src[:, ::-1]), "ai", ledger, store)
+    ai_src = load_rgb(a.ai) if a.ai else np.ascontiguousarray(src[:, ::-1])
+    _, ai_png = sign_image(ai_src, "ai", ledger, store)
     check("6_ai", rgb_of(ai_png))
 
     _write_json(out / "summary.json", summary)
@@ -222,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dm = sub.add_parser("demo", help="play the six demo scenarios offline")
     dm.add_argument("image")
+    dm.add_argument("--ai", help="AI-generated image for scenario 6 (default: mirrored photo)")
     dm.add_argument("-o", "--out", required=True)
     dm.set_defaults(fn=cmd_demo)
 
