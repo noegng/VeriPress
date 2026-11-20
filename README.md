@@ -71,4 +71,4 @@ Designed to **complement** C2PA, not replace it.
 
 ## Team
 
-3 people — 2 developers, 1 business/pitch.
+2 developers - 1 idea 
