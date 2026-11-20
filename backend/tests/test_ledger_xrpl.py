@@ -1,7 +1,7 @@
 """Smoke test for XrplLedger on Testnet — OWNER: Dev B.
 
-Skipped unless keys/ exists (run scripts/setup_testnet.py) and TILEPROOF_NET=1.
-    TILEPROOF_NET=1 uv run python -m pytest tests/test_ledger_xrpl.py -s
+Skipped unless keys/ exists (run scripts/setup_testnet.py) and VERIPRESS_NET=1.
+    VERIPRESS_NET=1 uv run python -m pytest tests/test_ledger_xrpl.py -s
 """
 
 import json
@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from tileproof.ledger import CredentialType, XrplLedger
+from veripress.ledger import CredentialType, XrplLedger
 
 KEYS = Path(__file__).resolve().parent.parent / "keys"
 pytestmark = pytest.mark.skipif(
-    os.environ.get("TILEPROOF_NET") != "1" or not (KEYS / "anchor.json").exists(),
-    reason="network smoke test: set TILEPROOF_NET=1 and run scripts/setup_testnet.py",
+    os.environ.get("VERIPRESS_NET") != "1" or not (KEYS / "anchor.json").exists(),
+    reason="network smoke test: set VERIPRESS_NET=1 and run scripts/setup_testnet.py",
 )
 
 
@@ -65,7 +65,7 @@ def test_registry_root_in_force_matches_local_registry():
     keys/registry_devices.json: anonymous proofs made from that file verify against it."""
     import time
 
-    from tileproof import zk
+    from veripress import zk
 
     reg = KEYS / "registry_devices.json"
     if not reg.exists():

@@ -3,7 +3,7 @@ import json
 from conftest import photo_like
 from PIL import Image
 
-from tileproof.cli import main
+from veripress.cli import main
 
 
 def test_demo_plays_the_six_scenarios(tmp_path):

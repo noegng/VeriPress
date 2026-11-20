@@ -25,7 +25,7 @@ TOLERANCE = 4.5  # max |delta| (in STEPs) for a tile to count as unchanged.
 # (1600 px q72 and 1280 px q55) with tiles = long side / 40: benign max 2.96, copy-move
 # forgeries of 2 tiles detected 100%, of half a tile 78%. Then on 4 iPhone HEIC photos
 # (Display P3) really sent through WhatsApp: needs ICC->sRGB + unclipped resampling + DC_WEIGHT,
-# after which benign max = 2.01. `tileproof.cli calibrate` re-runs it.
+# after which benign max = 2.01. `veripress.cli calibrate` re-runs it.
 
 
 def _dct_matrix(n: int) -> np.ndarray:

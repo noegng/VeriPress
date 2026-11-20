@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TileProof ZK setup: compile circuits, phase-2 trusted setup on top of the public
+# VeriPress ZK setup: compile circuits, phase-2 trusted setup on top of the public
 # "powers of tau" (PSE perpetual ceremony, phase 1, 2^14), export verification keys.
 #
 # Phase 2 here is a single local contribution: fine for a hackathon demo. In production it
@@ -19,7 +19,7 @@ for c in ${CIRCUITS:-device meta}; do
   cp "build/${c}_js/${c}.wasm" "build/$c.wasm"
   npx snarkjs groth16 setup "build/$c.r1cs" "$PTAU" "build/${c}_0000.zkey" >/dev/null
   npx snarkjs zkey contribute "build/${c}_0000.zkey" "build/${c}_final.zkey" \
-      --name="tileproof-hackathon" -e="$(head -c 64 /dev/urandom | xxd -p | tr -d '\n')" >/dev/null
+      --name="veripress-hackathon" -e="$(head -c 64 /dev/urandom | xxd -p | tr -d '\n')" >/dev/null
   npx snarkjs zkey export verificationkey "build/${c}_final.zkey" "build/${c}_vkey.json" >/dev/null
   echo "$c: build/$c.wasm build/${c}_final.zkey build/${c}_vkey.json"
 done

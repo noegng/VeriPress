@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from conftest import jpeg, rescale
 
-from tileproof.commitment import Disclosure, TileStatus, Verdict, commit, redact, verify
+from veripress.commitment import Disclosure, TileStatus, Verdict, commit, redact, verify
 
 SEED = b"s" * 32
 
@@ -124,7 +124,7 @@ def test_iphone_heic_photo_loads_with_orientation(tmp_path, photo):
     import pillow_heif
     from PIL import Image
 
-    from tileproof.tiling import load_rgb
+    from veripress.tiling import load_rgb
 
     pillow_heif.from_pillow(Image.fromarray(photo)).save(tmp_path / "IMG_0001.HEIC", quality=95)
     rgb = load_rgb(tmp_path / "IMG_0001.HEIC")
@@ -137,7 +137,7 @@ def test_display_p3_photo_is_read_in_srgb_like_its_shared_copy(tmp_path, photo):
 
     from PIL import Image, ImageCms
 
-    from tileproof.tiling import load_rgb
+    from veripress.tiling import load_rgb
 
     p3 = ImageCms.ImageCmsProfile(str(Path(__file__).parent / "data" / "display_p3.icc"))
     srgb = ImageCms.createProfile("sRGB")

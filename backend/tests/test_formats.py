@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from tileproof.tiling import load_rgb, load_upload
+from veripress.tiling import load_rgb, load_upload
 
 GRADIENT16 = np.linspace(0, 65535, 64 * 64).reshape(64, 64).astype(np.uint16)
 
@@ -57,15 +57,15 @@ RAW_EXTS = {".cr2", ".cr3", ".nef", ".arw", ".raf", ".rw2", ".orf", ".dng"}
 
 def _raw_samples():
     """Real camera RAW files are 3-10 MB each, so they are not committed: point
-    TILEPROOF_RAW_SAMPLES at a folder of them (CC0 samples: https://raw.pixls.us)."""
+    VERIPRESS_RAW_SAMPLES at a folder of them (CC0 samples: https://raw.pixls.us)."""
     import os
     from pathlib import Path
 
-    d = os.environ.get("TILEPROOF_RAW_SAMPLES")
+    d = os.environ.get("VERIPRESS_RAW_SAMPLES")
     return sorted(p for p in Path(d).iterdir() if p.suffix.lower() in RAW_EXTS) if d else []
 
 
-@pytest.mark.skipif(not _raw_samples(), reason="set TILEPROOF_RAW_SAMPLES to a folder of RAW files")
+@pytest.mark.skipif(not _raw_samples(), reason="set VERIPRESS_RAW_SAMPLES to a folder of RAW files")
 @pytest.mark.parametrize("path", _raw_samples(), ids=lambda p: p.name)
 def test_camera_raw_is_developed_deterministically(path):
     rgb = load_rgb(path)
@@ -89,7 +89,7 @@ def test_garbage_upload_is_rejected():
         load_upload(b"not an image at all", "x.jpg")
 
 
-@pytest.mark.skipif(not _raw_samples(), reason="set TILEPROOF_RAW_SAMPLES to a folder of RAW files")
+@pytest.mark.skipif(not _raw_samples(), reason="set VERIPRESS_RAW_SAMPLES to a folder of RAW files")
 @pytest.mark.parametrize("path", _raw_samples(), ids=lambda p: p.name)
 def test_raw_upload_matches_raw_file_with_or_without_name(path):
     data = path.read_bytes()

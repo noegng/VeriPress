@@ -34,7 +34,7 @@
 
 1. Hook: a real vs edited vs AI image — "which one is real?"
 2. Problem: provenance dies when metadata is stripped; trust is centralized.
-3. Solution: TileProof in 4 steps.
+3. Solution: VeriPress in 4 steps.
 4. **Live demo** (capture → edit → WhatsApp → redact → watermark copy → AI).
 5. Why it's different (comparison table vs C2PA).
 6. Honest limits + future work (ZK edits).
@@ -70,6 +70,6 @@ Order (whatever is not done at the 10:00 freeze becomes "future work" in the pit
 8. **Content-addressed disclosures** (IPFS CID in the memo, served by our API).
 9. **Aggregated anchoring** (Merkle root of N manifests per tx, without the Batch amendment).
 
-Demo additions: step 7 anonymous signing, step 8 proven claims "taken on 20 Nov near …"; C2PA moment: "the C2PA manifest dies after WhatsApp, TileProof still recovers provenance".
+Demo additions: step 7 anonymous signing, step 8 proven claims "taken on 20 Nov near …"; C2PA moment: "the C2PA manifest dies after WhatsApp, VeriPress still recovers provenance".
 
 Sync points: ~19:00, ~23:00, ~03:00, 08:00 — freeze 10:00. One PR per feature, merged by its author when green, announced to the other dev.

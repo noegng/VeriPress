@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// TileProof ZK CLI — contract in docs/interfaces.md § Phase 2. JSON on stdin -> JSON on stdout.
+// VeriPress ZK CLI — contract in docs/interfaces.md § Phase 2. JSON on stdin -> JSON on stdout.
 // Big integers are decimal strings. Exit code != 0 and a message on stderr on error.
 //
 //   echo '{}' | node zk/cli.mjs keygen

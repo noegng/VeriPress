@@ -23,8 +23,8 @@ from . import features as F
 from .merkle import MerkleTree, leaf_hash, sha256
 from .tiling import Grid, auto_tile, grid_for, resize_to, tile_pixels
 
-EXACT_DOMAIN = b"TPX1"
-ROBUST_DOMAIN = b"TPR1"
+EXACT_DOMAIN = b"VPX1"
+ROBUST_DOMAIN = b"VPR1"
 VERSION = 1
 REDACTED_MAX_MEAN = 16  # a redacted tile is black; JPEG keeps it far below these bounds
 REDACTED_MAX_P95 = 48

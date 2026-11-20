@@ -9,10 +9,10 @@ from PIL import Image
 from xrpl.constants import CryptoAlgorithm
 from xrpl.wallet import Wallet
 
-from tileproof import zk
-from tileproof.ledger import CredentialType, FakeLedger
-from tileproof.pipeline import FinalVerdict, sign_image, verify_image
-from tileproof.store import Store
+from veripress import zk
+from veripress.ledger import CredentialType, FakeLedger
+from veripress.pipeline import FinalVerdict, sign_image, verify_image
+from veripress.store import Store
 
 
 def png_to_rgb(png: bytes) -> np.ndarray:
@@ -36,8 +36,8 @@ def keys(tmp_path, monkeypatch, bjj_keys):
             data["bjj"] = bjj_keys[3]
         (d / f"{name}.json").write_text(json.dumps(data))
     (d / "registry_devices.json").write_text(json.dumps({"pks": [k["pk"] for k in bjj_keys]}))
-    monkeypatch.setenv("TILEPROOF_KEYS", str(d))
-    monkeypatch.setenv("TILEPROOF_WATERMARK", "0")  # not under test here, keeps the suite fast
+    monkeypatch.setenv("VERIPRESS_KEYS", str(d))
+    monkeypatch.setenv("VERIPRESS_WATERMARK", "0")  # not under test here, keeps the suite fast
     return d
 
 

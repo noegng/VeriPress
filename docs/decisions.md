@@ -12,7 +12,7 @@ Pour chaque question : la décision retenue et, si utile, pourquoi. Les détails
 | 2 | Filigrane TrustMark | À faire si possible (« la solution la plus pro possible »), avec repli sur un hachage perceptuel. **Fait.** |
 | 3 | Signature à la capture | Ed25519 logiciel d'abord, vraie passkey plus tard si le temps le permet. |
 | 4 | Réseau XRPL | **Testnet** (plus stable que Devnet, Credentials actifs). |
-| 5 | Format de l'ancrage | Payment de 1 drop + Memo (`tileproof/v1`). |
+| 5 | Format de l'ancrage | Payment de 1 drop + Memo (`veripress/v1`). |
 | 6 | Frontend | Une page servie par FastAPI d'abord ; visualisations (arbre de Merkle ↔ image) en option. **Faites.** |
 | 7 | WhatsApp pendant la démo | Image préparée à l'avance, et vidéo de secours. Le réseau de la salle n'est pas fiable. |
 | 8 | Où faire du TDD | Seulement : arbres de Merkle / preuves de masquage et règles du verdict final. |
@@ -64,12 +64,12 @@ Pour chaque question : la décision retenue et, si utile, pourquoi. Les détails
 |---|---|---|
 | Q13 | Nullifier | **Pas de nullifier** : le digest du manifeste est une entrée publique, et la signature vérifiée dans le circuit porte dessus, donc pas de rejeu. Le digest SHA-256 est découpé en deux moitiés de 128 bits. |
 | Q14 | Taille du registre | Profondeur 10 (1 024 appareils) ; registre de démo rempli avec ~20 appareils fictifs. À dire : l'anonymat croît avec le nombre d'appareils. |
-| Q15 | Outil `zk/` | Dev A livre `keygen`, `root`, `prove`, `verify` (+ métadonnées). Dev B s'en sert dans le script de mise en place et publie la racine (Memo `tileproof/registry-root/v1`). `XrplLedger.registry_root_at(time)`. |
+| Q15 | Outil `zk/` | Dev A livre `keygen`, `root`, `prove`, `verify` (+ métadonnées). Dev B s'en sert dans le script de mise en place et publie la racine (Memo `veripress/registry-root/v1`). `XrplLedger.registry_root_at(time)`. |
 | Q16 | Engagement des métadonnées | À la signature : EXIF `DateTimeOriginal` + GPS → `meta_commitment = Poseidon(heure unix, lat×10⁶, lon×10⁶, sel)` dans le manifeste signé. Sel secret. Pas d'EXIF = pas d'engagement. |
 | Q17 | Affirmations prouvées | Générées à la signature : « prise le jour J » (24 h) et « dans une zone de ~10 km autour de *ville* ». Jamais l'heure ni le GPS exacts. Preuves à la demande = travail futur (il faudrait authentifier le propriétaire). |
 | Q18 | Contrat JSON | `/api/verify` : `anonymous`, `zk`, `meta_claims`, `pending` (+ `credential_revoked_at`). `/api/sign` : champ `anonymous`. Première PR de la phase 2, avant le code. |
 | Q19 | Démo | Nouvelles étapes 7 (signature anonyme) et 8 (affirmations jour et zone), entre l'IA et la révocation. |
-| Q20 | C2PA et format | Manifeste C2PA dans les métadonnées du PNG publié, hors pixels, donc les arbres ne changent pas. Moment du pitch : « C2PA disparaît après WhatsApp, TileProof retrouve la provenance ». |
+| Q20 | C2PA et format | Manifeste C2PA dans les métadonnées du PNG publié, hors pixels, donc les arbres ne changent pas. Moment du pitch : « C2PA disparaît après WhatsApp, VeriPress retrouve la provenance ». |
 
 ### Tour 3 — passkey et organisation
 

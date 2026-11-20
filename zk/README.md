@@ -1,4 +1,4 @@
-# TileProof ZK
+# VeriPress ZK
 
 Circuits circom 2 (Groth16, BN254) et CLI Node. Contrat : `docs/interfaces.md` § Phase 2. Décisions : `docs/decisions.md` (Q2–Q4, Q13–Q14).
 

@@ -3,7 +3,7 @@ import json
 from conftest import jpeg, photo_like, rescale
 from PIL import Image
 
-from tileproof.cli import main
+from veripress.cli import main
 
 
 def test_calibrate_reports_margins_for_original_and_shared_pairs(tmp_path):

@@ -1948,45 +1948,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tileproof"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "pillow-heif" },
-    { name = "python-multipart" },
-    { name = "rawpy" },
-    { name = "trustmark" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "xrpl-py" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cryptography", specifier = ">=50.0.2" },
-    { name = "fastapi", specifier = ">=0.165.0" },
-    { name = "numpy", specifier = ">=2.5.5" },
-    { name = "pillow", specifier = ">=13.0.0" },
-    { name = "pillow-heif", specifier = ">=1.8.1" },
-    { name = "python-multipart", specifier = ">=0.0.34" },
-    { name = "rawpy", specifier = ">=0.28.0" },
-    { name = "trustmark", specifier = ">=0.9.2" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
-    { name = "xrpl-py", specifier = ">=5.2.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.2.0" }]
-
-[[package]]
 name = "torch"
 version = "2.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2200,6 +2161,45 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f5/62/25dcaa6b7e7b48f82ce633854ce96597ab768f9650931f4f86c572de392c/uvloop-0.23.0-cp315-cp315t-musllinux_1_2_aarch64.whl", hash = "sha256:378188efbb1524f2219d05246a3e1e5907217848d2882144dff59585f1b81d55", size = 4421324, upload-time = "2026-10-01T03:16:40.488Z" },
     { url = "https://files.pythonhosted.org/packages/05/46/04628239b43dcef703af314202a3307d6060918e2d76aa86c5b1188f5551/uvloop-0.23.0-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:4b8e207c67d207a8608fec57e116511030af3495dc0109b8c333cf9cb412b16f", size = 4462501, upload-time = "2026-10-01T03:16:42.359Z" },
 ]
+
+[[package]]
+name = "veripress"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pillow-heif" },
+    { name = "python-multipart" },
+    { name = "rawpy" },
+    { name = "trustmark" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "xrpl-py" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=50.0.2" },
+    { name = "fastapi", specifier = ">=0.165.0" },
+    { name = "numpy", specifier = ">=2.5.5" },
+    { name = "pillow", specifier = ">=13.0.0" },
+    { name = "pillow-heif", specifier = ">=1.8.1" },
+    { name = "python-multipart", specifier = ">=0.0.34" },
+    { name = "rawpy", specifier = ">=0.28.0" },
+    { name = "trustmark", specifier = ">=0.9.2" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
+    { name = "xrpl-py", specifier = ">=5.2.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.2.0" }]
 
 [[package]]
 name = "watchfiles"

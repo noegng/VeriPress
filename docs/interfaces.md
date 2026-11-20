@@ -6,16 +6,16 @@ Toute modification de ce fichier, de `ledger.py`, `store.py` ou des signatures d
 
 | Module | Propriétaire | Rôle |
 |---|---|---|
-| `tileproof/ledger.py` | Dev B | `Ledger` (protocole), `FakeLedger` (mémoire), `XrplLedger` (Testnet) |
-| `tileproof/store.py` | Dev A | stockage hors chaîne : manifeste + divulgation + image publiée + phash ; `find_by_watermark(wm_id, phash)` |
-| `tileproof/watermark.py` | Dev A | TrustMark : `embed`, `extract`, `warm_up()` (charge les modèles ; à appeler au démarrage de l'API). `TILEPROOF_WATERMARK=0` le désactive |
-| `tileproof/tiling.py` | Dev A | `load_upload(data: bytes, filename: str \| None) -> np.ndarray` : **point d'entrée pour les fichiers envoyés à l'API**. Gère JPEG/PNG/HEIC/WebP/AVIF/TIFF (y compris 16 bits), conversion ICC → sRGB, orientation EXIF, et les RAW d'appareils photo (CR2/CR3/NEF/ARW/RAF/RW2/ORF/DNG…, via LibRaw). Lève `ValueError` si illisible. Ne pas passer par `Image.open` avant : Pillow lit un RAW comme sa petite vignette d'aperçu |
-| `tileproof/pipeline.py` | Dev A | `sign_image`, `verify_image`, `redact_image`, `Report.to_json` |
-| `tileproof/api.py` | Dev B | FastAPI, appelle uniquement `pipeline.*` |
+| `veripress/ledger.py` | Dev B | `Ledger` (protocole), `FakeLedger` (mémoire), `XrplLedger` (Testnet) |
+| `veripress/store.py` | Dev A | stockage hors chaîne : manifeste + divulgation + image publiée + phash ; `find_by_watermark(wm_id, phash)` |
+| `veripress/watermark.py` | Dev A | TrustMark : `embed`, `extract`, `warm_up()` (charge les modèles ; à appeler au démarrage de l'API). `VERIPRESS_WATERMARK=0` le désactive |
+| `veripress/tiling.py` | Dev A | `load_upload(data: bytes, filename: str \| None) -> np.ndarray` : **point d'entrée pour les fichiers envoyés à l'API**. Gère JPEG/PNG/HEIC/WebP/AVIF/TIFF (y compris 16 bits), conversion ICC → sRGB, orientation EXIF, et les RAW d'appareils photo (CR2/CR3/NEF/ARW/RAF/RW2/ORF/DNG…, via LibRaw). Lève `ValueError` si illisible. Ne pas passer par `Image.open` avant : Pillow lit un RAW comme sa petite vignette d'aperçu |
+| `veripress/pipeline.py` | Dev A | `sign_image`, `verify_image`, `redact_image`, `Report.to_json` |
+| `veripress/api.py` | Dev B | FastAPI, appelle uniquement `pipeline.*` |
 
 Le manifeste signé contient `signer`, `op` (`capture` | `ai_generate`) et `wm_id` (hex 64 bits du filigrane, choisi à la signature : l'image est tatouée **avant** l'engagement).
 
-Le choix du ledger se fait par la variable d'env. `TILEPROOF_LEDGER=fake|xrpl` (défaut `fake`), lue dans `api.py`.
+Le choix du ledger se fait par la variable d'env. `VERIPRESS_LEDGER=fake|xrpl` (défaut `fake`), lue dans `api.py`.
 
 ## Fichiers générés par le script de mise en place (Dev B)
 
@@ -106,7 +106,7 @@ Tout ce qui suit est **additif** : les champs et routes de la phase 1 ne changen
 
 ## Outil ZK `zk/` (Dev A)
 
-Node ≥ 20, circuits circom 2 (Groth16, BN254), `snarkjs` + `circomlib`. Une seule entrée : `node zk/cli.mjs <commande>`, **JSON sur stdin → JSON sur stdout** (code ≠ 0 en cas d'erreur, message sur stderr). Wrapper Python : `tileproof/zk.py` (Dev A). Les grands entiers sont des **chaînes décimales**.
+Node ≥ 20, circuits circom 2 (Groth16, BN254), `snarkjs` + `circomlib`. Une seule entrée : `node zk/cli.mjs <commande>`, **JSON sur stdin → JSON sur stdout** (code ≠ 0 en cas d'erreur, message sur stderr). Wrapper Python : `veripress/zk.py` (Dev A). Les grands entiers sont des **chaînes décimales**.
 
 | Commande | Entrée | Sortie |
 |---|---|---|
@@ -152,9 +152,9 @@ class Ledger(Protocol):
 ```
 
 Memos XRPL :
-- ancrage anonyme : MemoType `tileproof/v1`, MemoData `{"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}` ;
+- ancrage anonyme : MemoType `veripress/v1`, MemoData `{"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}` ;
 - ancrage passkey : `{"d", "k": pubkey Ed25519 de l'appareil, "w": bundle_hash}` (sans `s`) ;
-- racine du registre : émise par le compte registre vers lui-même, MemoType `tileproof/registry-root/v1`, MemoData `{"root": "…", "depth": 10, "n": nb_appareils}`. La racine en vigueur à l'instant T est la dernière publiée avant T.
+- racine du registre : émise par le compte registre vers lui-même, MemoType `veripress/registry-root/v1`, MemoData `{"root": "…", "depth": 10, "n": nb_appareils}`. La racine en vigueur à l'instant T est la dernière publiée avant T.
 - Credential `CAPTURE_DEVICE` avec passkey : `URI` = hex de `"passkey:sha256:<hex>"`.
 
 Fichiers de clés (script de Dev B) : `keys/device.json` et `keys/ai.json` gagnent `"bjj": {"sk", "pk"}` (via `zk keygen`) ; `keys/registry_devices.json` = `{"pks": [[x, y], …]}`, dans l'ordre de l'arbre (appareils réels + ~20 fictifs).

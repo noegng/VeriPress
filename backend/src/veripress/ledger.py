@@ -12,7 +12,7 @@ Conventions (fixed):
 - `digest`   : hex SHA-256 of the canonical manifest (`Manifest.digest()`).
 - `signature`: hex Ed25519 signature (64 bytes) over `bytes.fromhex(digest)`.
 - Anchor tx  : Payment of 1 drop from the anchoring service account to the registry account,
-               one Memo: MemoType = hex("tileproof/v1"),
+               one Memo: MemoType = hex("veripress/v1"),
                MemoData = hex(JSON {"d": digest, "s": signature, "k": pubkey}).
 - Credential : issued by the registry account, CredentialType = hex of the enum value
                ("CAPTURE_DEVICE" / "AI_GENERATOR"), accepted by the subject.
@@ -21,7 +21,7 @@ Conventions (fixed):
 Phase 2 (details and memo formats: docs/interfaces.md § Phase 2):
 - anonymous anchor : MemoData {"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}
 - passkey anchor   : MemoData {"d": digest, "k": device ed25519 pubkey, "w": bundle_hash}
-- registry root    : registry -> registry, MemoType "tileproof/registry-root/v1",
+- registry root    : registry -> registry, MemoType "veripress/registry-root/v1",
                      MemoData {"root", "depth", "n"}; the root in force at T = last published before T.
 - revocation is NOT retroactive: `credential_type(pk, at_time)` answers for the instant `at_time`.
 """
@@ -73,7 +73,7 @@ class Ledger(Protocol):
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         """Read back an anchor tx (also when not validated yet: validated=False).
-        None if not found / not a tileproof memo."""
+        None if not found / not a veripress memo."""
         ...
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
@@ -164,8 +164,8 @@ class FakeLedger:
         return roots[-1] if roots else None
 
 
-MEMO_TYPE = "tileproof/v1"
-REGISTRY_ROOT_MEMO_TYPE = "tileproof/registry-root/v1"
+MEMO_TYPE = "veripress/v1"
+REGISTRY_ROOT_MEMO_TYPE = "veripress/registry-root/v1"
 LSF_ACCEPTED = 0x00010000
 DEFAULT_NODE = "https://s.altnet.rippletest.net:51234"
 EXPLORER = "https://testnet.xrpl.org/transactions/"
@@ -174,7 +174,7 @@ EXPLORER = "https://testnet.xrpl.org/transactions/"
 class XrplLedger:
     """Real implementation on XRPL Testnet.
 
-    Config: env TILEPROOF_XRPL_URL (default Testnet JSON-RPC), TILEPROOF_KEYS (default
+    Config: env VERIPRESS_XRPL_URL (default Testnet JSON-RPC), VERIPRESS_KEYS (default
     backend/keys). Needs keys/anchor.json (payer) and keys/registry.json (issuer + destination),
     written by scripts/setup_testnet.py.
     """
@@ -183,8 +183,8 @@ class XrplLedger:
         from xrpl.clients import JsonRpcClient
         from xrpl.wallet import Wallet
 
-        keys = Path(keys_dir or os.environ.get("TILEPROOF_KEYS") or Path(__file__).resolve().parents[2] / "keys")
-        self.client = JsonRpcClient(node_url or os.environ.get("TILEPROOF_XRPL_URL") or DEFAULT_NODE)
+        keys = Path(keys_dir or os.environ.get("VERIPRESS_KEYS") or Path(__file__).resolve().parents[2] / "keys")
+        self.client = JsonRpcClient(node_url or os.environ.get("VERIPRESS_XRPL_URL") or DEFAULT_NODE)
         self.registry = json.loads((keys / "registry.json").read_text())["address"]
         self.wallet = Wallet.from_seed(json.loads((keys / "anchor.json").read_text())["seed"])
         self._history_cache: dict[str, tuple[float, list[dict]]] = {}
@@ -224,7 +224,7 @@ class XrplLedger:
         return entries
 
     def _submit_anchor(self, data: dict, wait: bool = True) -> tuple[str, int]:
-        """Payment of 1 drop anchoring service -> registry carrying one tileproof/v1 memo.
+        """Payment of 1 drop anchoring service -> registry carrying one veripress/v1 memo.
         Returns (tx hash, ledger close time). wait=False (fast anchoring) lands with phase 2
         task 5; until then it still waits, which is correct, only slower."""
         from xrpl.models.transactions import Memo, Payment
@@ -273,7 +273,7 @@ class XrplLedger:
         return _anchor_from_memo(data, hash_, _close_time(r)) if data is not None else None
 
     def registry_root_at(self, at_time: int) -> str | None:
-        """Last root the registry published (AccountSet + tileproof/registry-root/v1 memo)
+        """Last root the registry published (AccountSet + veripress/registry-root/v1 memo)
         at or before `at_time`: a proof is accepted only against the root in force when the
         photo was anchored, so revoking a device (new root without it) is not retroactive."""
         root = None
@@ -375,7 +375,7 @@ def _memo_json(tx: dict, memo_type: str) -> dict | None:
 
 
 def _anchor_from_memo(data: dict, tx_hash: str, timestamp: int) -> Anchor | None:
-    """The three tileproof/v1 memo shapes (docs/interfaces.md):
+    """The three veripress/v1 memo shapes (docs/interfaces.md):
     named {"d","s","k"} · anonymous {"d","a":1,"r","h"} · passkey {"d","k","w"}."""
     url = EXPLORER + tx_hash
     try:
