@@ -43,6 +43,8 @@ Les points 1 à 3 ci-dessus sont confirmés corrigés (merci !). Nouveaux points
 6. **Historique** : une entrée non vérifiée a `timestamp: null`, ce qui s'affiche « 01/01/1970 ». Afficher « — » à la place (l. ~321).
 7. **Libellés** : « Signed and anchored on XRPL Testnet » (l. ~99) et les liens de l'historique restent figés sur Testnet, même avec le ledger factice. Mineur.
 
+**→ Fait (Dev B)** : (4) plus de pré-remplissage du tx_hash après signature, et le champ est vidé quand on choisit une nouvelle image à vérifier ; (5) `ValueError` du pipeline → 422, tests `test_sign_with_unknown_parent_is_422` et `…_known_parent_builds_history` ; (6) `timestamp: null` → « — » (dates de l'ancre et de l'historique) ; (7) libellé du bouton Signer et liens de l'explorateur selon `/api/health` (hors ligne : hash sans lien). Vérifié dans le navigateur, signature réelle sur Testnet comprise.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. soir — marche :** `setup_testnet.py` (comptes + Credentials + `--revoke`/`--reissue`, testé sur Testnet), `XrplLedger` (test de fumée OK), `api.py` (toutes les routes, réponses simulées tant que `pipeline.py` lève `NotImplementedError`, en-tête `X-Tileproof-Mock`), `static/index.html` (Signer/Vérifier, heatmap, vérifié à 390 px).

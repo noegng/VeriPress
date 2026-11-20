@@ -122,3 +122,27 @@ def test_preview_scales_16_bit_instead_of_clipping(client):
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     out = np.asarray(Image.open(io.BytesIO(r.content)))
     assert out.shape[:2] == (128, 128) and (out == 255).mean() < 0.05
+
+
+def test_sign_with_unknown_parent_is_422(client):
+    r = client.post(
+        "/api/sign",
+        files={"image": ("a.png", png(np.full((64, 64, 3), 128, np.uint8)), "image/png")},
+        data={"signer": "device", "parent": "AB" * 32},
+    )
+    assert r.status_code == 422 and "unknown parent" in r.json()["detail"]
+
+
+def test_sign_with_known_parent_builds_history(client, signed):
+    from conftest import photo_like
+
+    body, _ = signed
+    edit = photo_like(seed=5)
+    r = client.post(
+        "/api/sign",
+        files={"image": ("e.png", png(edit), "image/png")},
+        data={"signer": "device", "parent": body["tx_hash"].lower()},
+    )
+    assert r.status_code == 200, r.text
+    rep = post_verify(client.get(r.json()["image_url"]).content).json()
+    assert [h["op"] for h in rep["history"]] == ["edit", "capture"]

@@ -99,7 +99,7 @@
     <div class="card">
       <label class="drop" id="signDrop">
         <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" capture="environment" id="signFile">
-        <div>📷 <b>Take or choose a photo</b><br><small>Signed and anchored on XRPL Testnet</small></div>
+        <div>📷 <b>Take or choose a photo</b><br><small id="signHint">Signed and anchored on XRPL</small></div>
       </label>
       <div class="stage" id="signStage" hidden><img id="signPreview" alt="Image to sign"></div>
       <div class="row">
@@ -185,11 +185,22 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
+let ONCHAIN = false; // set from /api/health: real XRPL ledger vs offline demo ledger
+const EXPLORER = "https://testnet.xrpl.org/transactions/";
+function fmtTime(ts) { return ts == null ? "—" : new Date(ts * 1000).toLocaleString(); }
+// Explorer link only on the real ledger; offline the hash is shown without a dead link.
+function txLink(hash, url) {
+  const code = `<code>${esc(short(hash))}</code>`;
+  return ONCHAIN ? `<a href="${esc(safeUrl(url || EXPLORER + hash))}" target="_blank" rel="noopener">${code} ↗</a>` : code;
+}
+
 // Readiness pill: which ledger, and whether TrustMark has finished loading (check before demoing).
 async function pollStatus() {
   try {
     const h = await fetch("/api/health").then((r) => r.json());
-    const net = h.ledger === "XrplLedger" ? "⛓️ XRPL Testnet" : "offline ledger";
+    ONCHAIN = h.ledger === "XrplLedger";
+    $("signHint").textContent = ONCHAIN ? "Signed and anchored on XRPL Testnet" : "Signed and anchored on the offline demo ledger";
+    const net = ONCHAIN ? "⛓️ XRPL Testnet" : "offline ledger";
     const wm = !h.watermark ? "watermark off" : { ready: "watermark ready", loading: "loading watermark…", failed: "watermark failed" }[h.watermark_ready] || "watermark";
     const s = $("status");
     s.textContent = `${net} · ${wm}`; s.hidden = false;
@@ -245,6 +256,7 @@ picker("signDrop", "signFile", (f) => {
 });
 picker("verifyDrop", "verifyFile", (f) => {
   verifyFile = f; $("verifyBtn").disabled = false; $("verifyResult").hidden = true;
+  $("txInput").value = ""; // a hash left from a previous image would bypass the watermark lookup
   showPreview($("verifyPreview"), f);
 });
 
@@ -286,7 +298,8 @@ $("signBtn").addEventListener("click", async () => {
   ]);
   $("signDownload").href = safeUrl(res.image_url);
   $("signExplorer").href = safeUrl(res.explorer_url);
-  $("txInput").value = res.tx_hash || "";
+  // Not pre-filling the Verify tab's tx hash on purpose: demo step 3 must show the image
+  // being found by its watermark after WhatsApp, not by a hash we typed in for it.
   $("signResult").hidden = false;
   $("signResult").scrollIntoView({ behavior: "smooth", block: "start" });
 });
@@ -329,16 +342,16 @@ function showReport(r) {
     ["Found by", r.found_by && esc({ tx_hash: "tx hash", watermark: "invisible watermark", phash: "perceptual hash" }[r.found_by] || r.found_by)],
     ["Credential", r.credential && esc(r.credential)],
     ["Signature", r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
-    ["Anchored", a && esc(new Date(a.timestamp * 1000).toLocaleString())],
-    ["Transaction", a && `<a href="${esc(safeUrl(a.explorer_url))}" target="_blank" rel="noopener"><code>${esc(short(a.tx_hash))}</code> ↗</a>`],
+    ["Anchored", a && esc(fmtTime(a.timestamp))],
+    ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
     ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
     ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
   ]);
   const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", ai_generate: "🤖 AI-generated" };
   const hist = r.history || [];
   $("historyBox").hidden = hist.length < 2;
-  $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op)} · ${esc(new Date(h.timestamp * 1000).toLocaleString())}
-    · <a href="${esc(safeUrl("https://testnet.xrpl.org/transactions/" + h.tx_hash))}" target="_blank" rel="noopener"><code>${esc(short(h.tx_hash))}</code> ↗</a>${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
+  $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))}
+    · ${txLink(h.tx_hash)}${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
   if (r.tiles) $("treeLeaves").textContent = `▦ leaves — ${r.tiles.grid.cols * r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}×${r.tiles.grid.tile} px`;
   buildTree(r.tiles);
   lastEntry = r.verdict !== "unknown" ? r.entry_id : null;
