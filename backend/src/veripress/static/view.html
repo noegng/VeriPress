@@ -123,7 +123,7 @@ $("info").innerHTML = [
   ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
   ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.counts.exact + r.tiles.counts.robust}/${r.tiles.statuses.length} match`)],
 ].filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
-const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", ai_generate: "🤖 AI-generated" };
+const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", develop: "🎞️ Developed from the signed RAW", ai_generate: "🤖 AI-generated" };
 const hist = r.history || [];
 $("historyBox").hidden = hist.length < 2;
 $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))} · ${txLink(h.tx_hash)}${h.verified ? "" : " · ❌ not verified"}</li>`).join("");

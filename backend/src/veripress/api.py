@@ -260,6 +260,7 @@ async def sign(
     parent: str | None = Form(None),
     anonymous: str | None = Form(None),
     wait: str | None = Form(None),
+    op: str | None = Form(None),
 ):
     if signer not in ("device", "ai"):
         raise HTTPException(422, "signer must be device|ai")
@@ -267,10 +268,12 @@ async def sign(
     if parent and not PARENT.match(parent):
         raise HTTPException(422, "parent must be a tx hash")
     anon = (anonymous or "").strip().lower() in ("1", "true", "on")
-    # wait=0: fast anchoring, answer at submission (pending until validated). Default: wait.
-    # The offline FakeLedger has no consensus to wait for (and nothing would ever validate a
-    # pending tx in the backup demo), so it always anchors as validated.
-    wait_validated = (wait or "").strip() != "0" or isinstance(app.state.ledger, FakeLedger)
+    # op=develop: this JPEG is the device's own development of its signed RAW `parent`
+    # (interfaces.md § Négatif RAW); the pipeline refuses it without parent / another key.
+    op = (op or "").strip().lower() or None
+    if op not in (None, "develop"):
+        raise HTTPException(422, "op must be develop (or omitted)")
+    wait_validated = wait_for_validation(wait)
     data, rgb = await read_upload(image)
     # ZK B: capture time + GPS from the file's EXIF are committed in the signed manifest and
     # only proven as "day" / "~10 km area" claims. The published PNG carries no EXIF.
@@ -279,7 +282,7 @@ async def sign(
         result, _png = await run_in_threadpool(
             lambda: pipeline.sign_image(
                 rgb, signer, app.state.ledger, app.state.store, parent,
-                anonymous=anon, exif=exif, wait=wait_validated,
+                anonymous=anon, exif=exif, wait=wait_validated, op=op,
             )
         )
     except FileNotFoundError as e:  # keys/ missing
@@ -290,14 +293,18 @@ async def sign(
         raise HTTPException(503, f"zero-knowledge prover unavailable — run `cd zk && npm ci` ({e})") from e
     except RuntimeError as e:  # anchor tx rejected
         raise HTTPException(502, str(e)) from e
-    body = result.to_json()
-    # Phase 2 /api/sign fields (interfaces.md); the pipeline's own values win once it sets them.
-    body.setdefault("anonymous", result.anchor.anonymous)
-    body.setdefault("pending", not result.anchor.validated)
-    body.setdefault("meta_claims", [])
+    body = result.to_json()  # carries anonymous / passkey / pending / meta_claims (interfaces.md)
     if result.anchor.anonymous:
         body.setdefault("registry_root", result.anchor.registry_root)
     return body
+
+
+def wait_for_validation(wait) -> bool:
+    """wait=0 / false: fast anchoring, answer at submission (pending until validated). Default:
+    wait. The offline FakeLedger has no consensus to wait for (and nothing would ever validate
+    a pending tx in the backup demo), so it always anchors as validated."""
+    fast = str(wait).strip().lower() in ("0", "false") if wait is not None else False
+    return not fast or isinstance(app.state.ledger, FakeLedger)
 
 
 @app.post("/api/verify")
@@ -393,7 +400,8 @@ async def passkey_prepare(image: UploadFile = File(...), parent: str | None = Fo
     data, rgb = await read_upload(image)
     exif = await run_in_threadpool(metadata.exif_from_upload, data)
     try:
-        return await run_in_threadpool(lambda: prepare(rgb, app.state.store, parent, exif=exif))
+        # The ledger gives the T0 lower bound and checks that `parent` is anchored.
+        return await run_in_threadpool(lambda: prepare(rgb, app.state.store, parent, exif=exif, ledger=app.state.ledger))
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 
@@ -405,21 +413,19 @@ async def passkey_complete(request: Request) -> dict:
         body = await request.json()
         prep_id, assertion = str(body["prep_id"]), dict(body["assertion"])
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(422, "body must be {prep_id, assertion}") from e
+        raise HTTPException(422, "body must be {prep_id, assertion, wait?}") from e
+    wait_validated = wait_for_validation(body.get("wait"))
     try:
-        result, _png = await run_in_threadpool(complete, prep_id, assertion, app.state.ledger, app.state.store)
+        result, _png = await run_in_threadpool(
+            lambda: complete(prep_id, assertion, app.state.ledger, app.state.store, wait=wait_validated)
+        )
     except KeyError as e:
         raise HTTPException(404, "unknown or expired prep_id") from e
     except ValueError as e:  # assertion does not verify / passkey not attested…
         raise HTTPException(422, str(e)) from e
     except RuntimeError as e:  # anchor tx rejected
         raise HTTPException(502, str(e)) from e
-    body = result.to_json()
-    body.setdefault("anonymous", False)
-    body.setdefault("pending", not result.anchor.validated)
-    body.setdefault("meta_claims", [])
-    body.setdefault("passkey", True)
-    return body
+    return result.to_json()
 
 
 @app.post("/api/redact")

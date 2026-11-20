@@ -127,8 +127,12 @@
         <button class="btn ghost" id="passkeySetup" hidden>🔑 Set up this laptop's passkey (Touch ID)</button>
       </div>
       <details class="more">
-        <summary>This image is an edit of a signed image</summary>
+        <summary>This image is a version of a signed image (edit, RAW development)</summary>
         <input type="text" id="parentInput" placeholder="tx hash of the original (version chain)" autocomplete="off" spellcheck="false">
+        <label class="check">
+          <input type="checkbox" id="developInput">
+          <span>🎞️ <b>Development of this RAW</b><br><small>The original is a RAW negative signed by this same device; this JPEG is its developed reference image.</small></span>
+        </label>
       </details>
       <div class="err" id="signErr"></div>
     </div>
@@ -339,6 +343,10 @@ $("signBtn").addEventListener("click", async () => {
   fd.append("signer", document.querySelector("input[name=signer]:checked").value);
   const parent = $("parentInput").value.trim();
   if (parent) fd.append("parent", parent);
+  if ($("developInput").checked) {
+    if (!parent) { $("signErr").textContent = "⚠ Development of a RAW: paste the tx hash of the signed RAW first."; return; }
+    fd.append("op", "develop");
+  }
   const anon = $("anonInput").checked;
   if (anon) fd.append("anonymous", "1");
   fd.append("wait", "0"); // fast anchoring (decisions.md Q11): answer at submission, then poll
@@ -452,7 +460,7 @@ $("passkeyBtn").addEventListener("click", async () => {
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Anchoring…';
   try {
     const r = await fetch("/api/sign/passkey/complete", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prep_id: prep.prep_id, assertion }) });
+      body: JSON.stringify({ prep_id: prep.prep_id, assertion, wait: 0 }) }); // fast anchoring, then poll
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
     showSignResult(body);
@@ -517,7 +525,7 @@ function showReport(r) {
   const claims = r.meta_claims || [];
   $("claimsBox").hidden = claims.length === 0;
   $("claims").innerHTML = claims.map((c) => `<li>${c.proof_ok ? "✅" : "❌"} ${esc({ day: "Taken on", area: "Taken within" }[c.kind] || c.kind)} <b>${esc(c.label)}</b></li>`).join("");
-  const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", ai_generate: "🤖 AI-generated" };
+  const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", develop: "🎞️ Developed from the signed RAW", ai_generate: "🤖 AI-generated" };
   const hist = r.history || [];
   $("historyBox").hidden = hist.length < 2;
   $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))}
