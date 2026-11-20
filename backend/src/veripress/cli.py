@@ -204,8 +204,11 @@ def cmd_prepare_demo(a: argparse.Namespace) -> int:
     _, red = redact_image(signed, res.entry_id, [(w // 8, h // 4, w * 3 // 8, h // 2)], store)
     check("4_redacted.png", red, "real", note="redacted area authenticated by hash")
     if res.manifest.wm_id and others:
-        fake = watermark.embed(np.ascontiguousarray(load_rgb(others[0])), bytes.fromhex(res.manifest.wm_id))
-        check("5_copied_watermark.jpg", _jpeg(fake, 90), "unknown", note="watermark copied onto another photo")
+        # Mirrored: a picture that was never signed. (others[0] itself is signed below: copying the
+        # watermark onto it would rightly find its own record, as an edit of it.)
+        unsigned = np.ascontiguousarray(load_rgb(others[0])[:, ::-1])
+        fake = watermark.embed(unsigned, bytes.fromhex(res.manifest.wm_id))
+        check("5_copied_watermark.jpg", _jpeg(fake, 90), "unknown", note="watermark copied onto an unsigned photo")
 
     ai_files = sorted(p for p in (demo / "ai").iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
     if ai_files and (keys_dir() / "ai.json").exists():
