@@ -105,6 +105,11 @@ class Ledger(Protocol):
         by the registry before that instant), or None."""
         ...
 
+    def credential_pq(self, pubkey: str) -> str | None:
+        """sha256 hex of the ML-DSA-87 public key attested in the key's credential URI
+        ("mldsa87:sha256:<hex>", alongside "passkey:sha256:<hex>" separated by ";"), or None."""
+        ...
+
     def anchor_batch(self, root: str, count: int, wait: bool = True) -> Anchor:
         """Aggregated anchoring: one tx for the Merkle root of `count` records (memo {"b", "n"})."""
         ...
@@ -127,14 +132,21 @@ class FakeLedger:
         self.credentials: dict[str, CredentialType] = {}
         self.revoked_at: dict[str, int] = {}
         self.passkeys: dict[str, str] = {}
+        self.pq_keys: dict[str, str] = {}
         self.registry_roots: list[tuple[int, str]] = []  # (published at, root), in order
         self.ledgers: dict[int, tuple[str, int]] = {}  # index -> (hash, close time)
 
-    def issue(self, pubkey: str, ctype: CredentialType, passkey_hash: str | None = None) -> None:
+    def issue(self, pubkey: str, ctype: CredentialType, passkey_hash: str | None = None,
+              pq_hash: str | None = None) -> None:
         self.credentials[pubkey] = ctype
         self.revoked_at.pop(pubkey, None)
         if passkey_hash:
             self.passkeys[pubkey] = passkey_hash
+        if pq_hash:
+            self.pq_keys[pubkey] = pq_hash
+
+    def credential_pq(self, pubkey: str) -> str | None:
+        return self.pq_keys.get(pubkey)
 
     def revoke(self, pubkey: str, at: int | None = None) -> None:
         if pubkey in self.credentials:
@@ -646,6 +658,11 @@ def _ledger_header(result: dict) -> tuple[int, str, int]:
     index = int(result.get("ledger_index") or led["ledger_index"])
     ledger_hash = str(result.get("ledger_hash") or led["ledger_hash"]).upper()
     return index, ledger_hash, ripple_time_to_posix(int(led["close_time"]))
+
+    # --- Hybrid post-quantum key attestation — TODO Dev B ---
+
+    def credential_pq(self, pubkey: str) -> str | None:
+        raise NotImplementedError("Dev B: parse 'mldsa87:sha256:<hex>' in the CAPTURE_DEVICE credential URI")
 
 
 def _close_time(result: dict) -> int:
