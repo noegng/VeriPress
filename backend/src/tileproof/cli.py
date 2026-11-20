@@ -3,7 +3,7 @@
   tileproof commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
   tileproof verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   tileproof redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
-  tileproof demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the six demo scenarios offline (FakeLedger)
+  tileproof demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
   tileproof calibrate ORIG_DIR SHARED_DIR -o OUT.json
                                                -> robust-tile / phash margins on real shared copies
                                                   (same file stem in both dirs, e.g. IMG_1.jpg / IMG_1.jpeg)
@@ -119,6 +119,19 @@ def cmd_demo(a: argparse.Namespace) -> int:
     ledger, store = FakeLedger(), Store(out / "store")
     ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
     ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
+    # Anonymous registry (ZK A): the device + 20 fictitious members, root "published" at t=0.
+    from . import zk
+
+    dev = json.loads((keys / "device.json").read_text())
+    if "bjj" not in dev:
+        dev["bjj"] = zk.keygen()
+        _write_json(keys / "device.json", dev)
+    reg = keys / "registry_devices.json"
+    if not reg.exists():
+        pks = [zk.keygen()["pk"] for _ in range(20)]
+        pks.insert(7, dev["bjj"]["pk"])
+        _write_json(reg, {"pks": pks})
+    ledger.publish_registry_root(zk.root(json.loads(reg.read_text())["pks"]), at=0)
 
     def rgb_of(png: bytes):
         return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
@@ -131,7 +144,7 @@ def cmd_demo(a: argparse.Namespace) -> int:
         if hm:
             (out / f"{name}.heatmap.png").write_bytes(hm)
         j = report.to_json()
-        summary[name] = {k: j[k] for k in ("verdict", "reason", "found_by", "credential")}
+        summary[name] = {k: j[k] for k in ("verdict", "reason", "found_by", "credential", "anonymous")}
         summary[name]["tiles"] = j["tiles"]["counts"] if j["tiles"] else None
         print(f"{name:20} {j['verdict']:8} via {str(j['found_by']):9} {j['reason']}")
 
@@ -156,6 +169,10 @@ def cmd_demo(a: argparse.Namespace) -> int:
     ai_src = load_rgb(a.ai) if a.ai else np.ascontiguousarray(src[:, ::-1])
     _, ai_png = sign_image(ai_src, "ai", ledger, store)
     check("6_ai", rgb_of(ai_png))
+
+    anon_src = np.ascontiguousarray(src[::-1])  # another picture, signed without revealing the device
+    _, anon_png = sign_image(anon_src, "device", ledger, store, anonymous=True)
+    check("7_anonymous", rgb_of(anon_png))
 
     _write_json(out / "summary.json", summary)
     print(f"written to {out}/")

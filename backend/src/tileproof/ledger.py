@@ -45,11 +45,33 @@ class Anchor:
     pubkey: str
     timestamp: int  # unix seconds (ledger close time)
     explorer_url: str
+    # Phase 2 (docs/interfaces.md § Phase 2)
+    validated: bool = True  # False while the tx is not yet in a validated ledger (fast anchoring)
+    anonymous: bool = False
+    registry_root: str = ""  # anonymous mode: registry root the proof was made against
+    bundle_hash: str = ""  # anonymous / passkey: sha256 hex of the proof bundle kept in the store
+    cid: str = ""  # option: content id of the disclosure
 
 
 class Ledger(Protocol):
-    def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
-        """Submit the anchor tx, wait for validation, return it."""
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        """Submit the anchor tx; wait=True waits for validation, False returns on submit."""
+        ...
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        """Anonymous anchor: no device key nor signature on chain, only the proof's root and hash."""
+        ...
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        """Anonymous device registry root in force at `at_time` (last one published before it)."""
+        ...
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        """Unix time of the CredentialDelete of this key's credential, if any."""
+        ...
+
+    def credential_passkey(self, pubkey: str) -> str | None:
+        """sha256 hex of the P-256 passkey attested in the credential URI, if any."""
         ...
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
@@ -57,8 +79,8 @@ class Ledger(Protocol):
         ...
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
-        """Valid (accepted, not expired, not deleted) credential of the key's account.
-        `at_time` may be ignored for the hackathon (current state only)."""
+        """Credential of the key's account valid at `at_time` (issued before it, not deleted
+        before it; non-retroactive revocation, decisions.md Q5). None = now."""
         ...
 
 
@@ -68,24 +90,58 @@ class FakeLedger:
     def __init__(self) -> None:
         self.anchors: dict[str, Anchor] = {}
         self.credentials: dict[str, CredentialType] = {}
+        self.revoked_at: dict[str, int] = {}
+        self.passkeys: dict[str, str] = {}
+        self.registry_roots: list[tuple[int, str]] = []  # (published at, root), in order
 
-    def issue(self, pubkey: str, ctype: CredentialType) -> None:
+    def issue(self, pubkey: str, ctype: CredentialType, passkey_hash: str | None = None) -> None:
         self.credentials[pubkey] = ctype
+        self.revoked_at.pop(pubkey, None)
+        if passkey_hash:
+            self.passkeys[pubkey] = passkey_hash
 
-    def revoke(self, pubkey: str) -> None:
-        self.credentials.pop(pubkey, None)
+    def revoke(self, pubkey: str, at: int | None = None) -> None:
+        if pubkey in self.credentials:
+            self.revoked_at[pubkey] = int(time.time()) if at is None else at
 
-    def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
-        tx_hash = hashlib.sha256(f"{digest}{signature}{len(self.anchors)}".encode()).hexdigest().upper()
-        a = Anchor(tx_hash, digest, signature, pubkey, int(time.time()), f"fake://tx/{tx_hash}")
-        self.anchors[tx_hash] = a
+    def publish_registry_root(self, root: str, at: int | None = None) -> None:
+        self.registry_roots.append((int(time.time()) if at is None else at, root))
+        self.registry_roots.sort()
+
+    def _store(self, a: Anchor) -> Anchor:
+        self.anchors[a.tx_hash] = a
         return a
+
+    def _tx_hash(self, *parts: str) -> str:
+        return hashlib.sha256(("".join(parts) + str(len(self.anchors))).encode()).hexdigest().upper()
+
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        h = self._tx_hash(digest, signature)
+        return self._store(Anchor(h, digest, signature, pubkey, int(time.time()), f"fake://tx/{h}"))
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        h = self._tx_hash(digest, bundle_hash)
+        return self._store(Anchor(h, digest, "", "", int(time.time()), f"fake://tx/{h}", anonymous=True,
+                                  registry_root=registry_root, bundle_hash=bundle_hash))
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         return self.anchors.get(tx_hash)
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
+        revoked = self.revoked_at.get(pubkey)
+        if revoked is not None and (at_time is None or at_time >= revoked):
+            return None
         return self.credentials.get(pubkey)
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        return self.revoked_at.get(pubkey)
+
+    def credential_passkey(self, pubkey: str) -> str | None:
+        return self.passkeys.get(pubkey)
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        roots = [r for t, r in self.registry_roots if t <= at_time]
+        return roots[-1] if roots else None
 
 
 MEMO_TYPE = "tileproof/v1"
@@ -111,7 +167,8 @@ class XrplLedger:
         self.registry = json.loads((keys / "registry.json").read_text())["address"]
         self.wallet = Wallet.from_seed(json.loads((keys / "anchor.json").read_text())["seed"])
 
-    def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        # TODO Dev B (phase 2): wait=False -> submit without waiting (fast anchoring)
         from xrpl.models.transactions import Memo, Payment
         from xrpl.transaction import submit_and_wait
         from xrpl.utils import str_to_hex
@@ -182,6 +239,21 @@ class XrplLedger:
             if node.get("Flags", 0) & LSF_ACCEPTED and not expired:
                 return ctype
         return None
+
+
+    # ---- Phase 2 — TODO Dev B (docs/interfaces.md § Phase 2) ----
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        raise NotImplementedError("Dev B, phase 2: anonymous anchor memo")
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        raise NotImplementedError("Dev B, phase 2: registry roots published by the registry account")
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        raise NotImplementedError("Dev B, phase 2: CredentialDelete date")
+
+    def credential_passkey(self, pubkey: str) -> str | None:
+        raise NotImplementedError("Dev B, phase 2: passkey hash in the credential URI")
 
 
 def _close_time(result: dict) -> int:

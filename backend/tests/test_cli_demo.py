@@ -19,7 +19,9 @@ def test_demo_plays_the_six_scenarios(tmp_path):
         "4_redacted": "real",
         "5_copied_watermark": "unknown",
         "6_ai": "ai",
+        "7_anonymous": "real",
     }
+    assert summary["7_anonymous"]["anonymous"] is True
     assert (out / "2_edited.heatmap.png").exists()
 
 
