@@ -167,10 +167,15 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
     from .commitment import TileStatus
     from .perceptual import phash
 
-    shared = {p.stem: p for p in Path(a.shared).iterdir() if p.is_file()}
+    def images(d: str) -> list[Path]:
+        return sorted(p for p in Path(d).iterdir() if p.is_file() and not p.name.startswith("."))
+
+    shared = {p.stem: p for p in images(a.shared)}
     pairs: dict[str, dict] = {}
-    for orig in sorted(Path(a.originals).iterdir()):
+    missing: list[str] = []
+    for orig in images(a.originals):
         if orig.stem not in shared:
+            missing.append(orig.stem)
             continue
         src, recv = load_rgb(orig), load_rgb(shared[orig.stem])
         manifest, disclosure = commit(src, os.urandom(32))
@@ -189,9 +194,12 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
     report = {
         "tolerance": F.TOLERANCE,
         "pairs": pairs,
+        "missing": missing,
         "all_pass": bool(pairs) and all(p["changed_tiles"] == 0 and p["phash_distance"] <= 10 for p in pairs.values()),
     }
     _write_json(Path(a.out), report)
+    if missing:
+        print(f"no shared copy for: {', '.join(missing)}")
     print(f"all_pass={report['all_pass']} (tolerance {F.TOLERANCE}) -> {a.out}")
     return 0
 

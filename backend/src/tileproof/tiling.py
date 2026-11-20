@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageCms, ImageOps
+
+try:  # iPhone photos are HEIC by default
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:  # pragma: no cover
+    pass
 
 DEFAULT_TILE = 32  # floor
 TILES_ACROSS = 40  # calibrated on real 4K photos shared at 1280-1600 px: a tile must keep ~40 px
@@ -17,18 +25,38 @@ def auto_tile(width: int, height: int) -> int:
     return max(DEFAULT_TILE, 8 * round(max(width, height) / TILES_ACROSS / 8))
 
 
+_SRGB = ImageCms.createProfile("sRGB")
+
+
 def load_rgb(source: str | Path | Image.Image) -> np.ndarray:
-    """Load an image as an HxWx3 uint8 array, applying EXIF orientation."""
+    """Load an image as an HxWx3 uint8 sRGB array, applying EXIF orientation and the ICC profile.
+
+    iPhone photos are Display P3 while shared copies (WhatsApp...) are untagged sRGB: reading
+    both as raw numbers shifts every tile (real-photo calibration finding)."""
     img = source if isinstance(source, Image.Image) else Image.open(source)
-    img = ImageOps.exif_transpose(img)
-    return np.asarray(img.convert("RGB"), dtype=np.uint8)
+    icc = img.info.get("icc_profile")
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    if icc:
+        try:
+            src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+            if "srgb" not in ImageCms.getProfileDescription(src).lower():
+                img = ImageCms.profileToProfile(img, src, _SRGB, outputMode="RGB")
+        except (ImageCms.PyCMSError, OSError):
+            pass  # unreadable profile: keep the raw values
+    return np.asarray(img, dtype=np.uint8)
 
 
 def resize_to(rgb: np.ndarray, width: int, height: int) -> np.ndarray:
     """Bring a received image back to the committed size (e.g. after a platform downscale)."""
     if rgb.shape[1] == width and rgb.shape[0] == height:
         return rgb
-    return np.asarray(Image.fromarray(rgb).resize((width, height), Image.Resampling.LANCZOS))
+    # Resample in float, per channel: Lanczos ringing must not be clipped at 0/255, clipping
+    # shifts the mean of tiles with thin dark lines on a bright background. Returns float32.
+    chans = [
+        np.asarray(Image.fromarray(rgb[..., c].astype(np.float32), "F").resize((width, height), Image.Resampling.LANCZOS))
+        for c in range(3)
+    ]
+    return np.stack(chans, axis=-1)
 
 
 @dataclass(frozen=True)

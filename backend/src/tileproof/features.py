@@ -23,7 +23,9 @@ STEP = 4.0
 TOLERANCE = 4.5  # max |delta| (in STEPs) for a tile to count as unchanged.
 # Calibrated 20/11 on 6 real 3-5k camera photos (Wikimedia Commons) shared WhatsApp-like
 # (1600 px q72 and 1280 px q55) with tiles = long side / 40: benign max 2.96, copy-move
-# forgeries of 2 tiles detected 100%, of half a tile 78%. `tileproof.cli calibrate` re-runs it.
+# forgeries of 2 tiles detected 100%, of half a tile 78%. Then on 4 iPhone HEIC photos
+# (Display P3) really sent through WhatsApp: needs ICC->sRGB + unclipped resampling + DC_WEIGHT,
+# after which benign max = 2.01. `tileproof.cli calibrate` re-runs it.
 
 
 def _dct_matrix(n: int) -> np.ndarray:
@@ -83,6 +85,11 @@ def feature_bytes(vec: np.ndarray) -> bytes:
     return np.asarray(vec, dtype=">i2").tobytes()
 
 
+DC_WEIGHT = 0.5  # mean brightness drifts more than structure under resampling/clipping
+
+
 def tile_distance(received_raw: np.ndarray, committed: np.ndarray) -> np.ndarray:
-    """Per-tile L-infinity distance (in quantization steps)."""
-    return np.abs(received_raw - committed.astype(np.float32)).max(axis=1)
+    """Per-tile weighted L-infinity distance (in quantization steps), DC down-weighted."""
+    d = np.abs(received_raw - committed.astype(np.float32))
+    d[:, 0] *= DC_WEIGHT
+    return d.max(axis=1)
