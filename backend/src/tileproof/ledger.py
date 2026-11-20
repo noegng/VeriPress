@@ -104,24 +104,58 @@ class FakeLedger:
     def __init__(self) -> None:
         self.anchors: dict[str, Anchor] = {}
         self.credentials: dict[str, CredentialType] = {}
+        self.revoked_at: dict[str, int] = {}
+        self.passkeys: dict[str, str] = {}
+        self.registry_roots: list[tuple[int, str]] = []  # (published at, root), in order
 
-    def issue(self, pubkey: str, ctype: CredentialType) -> None:
+    def issue(self, pubkey: str, ctype: CredentialType, passkey_hash: str | None = None) -> None:
         self.credentials[pubkey] = ctype
+        self.revoked_at.pop(pubkey, None)
+        if passkey_hash:
+            self.passkeys[pubkey] = passkey_hash
 
-    def revoke(self, pubkey: str) -> None:
-        self.credentials.pop(pubkey, None)
+    def revoke(self, pubkey: str, at: int | None = None) -> None:
+        if pubkey in self.credentials:
+            self.revoked_at[pubkey] = int(time.time()) if at is None else at
 
-    def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
-        tx_hash = hashlib.sha256(f"{digest}{signature}{len(self.anchors)}".encode()).hexdigest().upper()
-        a = Anchor(tx_hash, digest, signature, pubkey, int(time.time()), f"fake://tx/{tx_hash}")
-        self.anchors[tx_hash] = a
+    def publish_registry_root(self, root: str, at: int | None = None) -> None:
+        self.registry_roots.append((int(time.time()) if at is None else at, root))
+        self.registry_roots.sort()
+
+    def _store(self, a: Anchor) -> Anchor:
+        self.anchors[a.tx_hash] = a
         return a
+
+    def _tx_hash(self, *parts: str) -> str:
+        return hashlib.sha256(("".join(parts) + str(len(self.anchors))).encode()).hexdigest().upper()
+
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        h = self._tx_hash(digest, signature)
+        return self._store(Anchor(h, digest, signature, pubkey, int(time.time()), f"fake://tx/{h}"))
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        h = self._tx_hash(digest, bundle_hash)
+        return self._store(Anchor(h, digest, "", "", int(time.time()), f"fake://tx/{h}", anonymous=True,
+                                  registry_root=registry_root, bundle_hash=bundle_hash))
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         return self.anchors.get(tx_hash)
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
+        revoked = self.revoked_at.get(pubkey)
+        if revoked is not None and (at_time is None or at_time >= revoked):
+            return None
         return self.credentials.get(pubkey)
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        return self.revoked_at.get(pubkey)
+
+    def credential_passkey(self, pubkey: str) -> str | None:
+        return self.passkeys.get(pubkey)
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        roots = [r for t, r in self.registry_roots if t <= at_time]
+        return roots[-1] if roots else None
 
 
 MEMO_TYPE = "tileproof/v1"

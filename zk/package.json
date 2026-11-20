@@ -1,0 +1,12 @@
+{
+  "name": "tileproof-zk",
+  "private": true,
+  "type": "module",
+  "description": "TileProof zero-knowledge circuits and CLI (see docs/interfaces.md, Phase 2)",
+  "scripts": { "setup": "bash setup.sh" },
+  "dependencies": {
+    "circomlib": "2.0.5",
+    "circomlibjs": "0.1.7",
+    "snarkjs": "0.7.6"
+  }
+}

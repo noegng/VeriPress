@@ -47,6 +47,9 @@ class Manifest:
     op: str = "capture"  # capture | ai_generate | edit
     parent: str | None = None  # tx hash of the version this one was edited from
     wm_id: str = ""  # hex 64-bit watermark lookup id embedded in the pixels ("" = none)
+    anonymous: bool = False  # signed with a zero-knowledge device attestation (signer = "")
+    meta_commitment: str | None = None  # Poseidon commitment to EXIF time + GPS (ZK B)
+    passkey: str | None = None  # P-256 public key (SEC1 hex) when signed with a passkey
     v: int = VERSION
 
     @property

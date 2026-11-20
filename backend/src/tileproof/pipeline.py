@@ -22,7 +22,9 @@ original: both are committed at signing. sign_image refuses a `parent` that is n
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
+import json
 import os
 from dataclasses import dataclass, field
 from enum import Enum
@@ -35,8 +37,8 @@ from .tiling import Grid
 from .commitment import Manifest, Verdict, VerifyResult, commit, heatmap, redact, verify
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
-from . import watermark
-from .signing import load_key, verify_signature
+from . import watermark, zk
+from .signing import keys_dir, load_key, verify_signature
 from .store import Entry, Store
 
 Signer = Literal["device", "ai"]  # demo keys in keys/device.json, keys/ai.json (written by Dev B's setup script)
@@ -86,6 +88,13 @@ class Report:
     tiles: VerifyResult | None
     grid: Grid | None = None
     history: list[dict] = field(default_factory=list)  # newest first: {tx_hash, op, timestamp, verified}
+    # Phase 2 (docs/interfaces.md § Phase 2)
+    anonymous: bool = False
+    zk: dict | None = None  # {"proof_ok", "registry_root", "root_valid_at_anchor"} in anonymous mode
+    credential_revoked_at: int | None = None
+    passkey: bool = False
+    meta_claims: list[dict] = field(default_factory=list)
+    pending: bool = False
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
         """Shape: docs/interfaces.md "POST /api/verify"."""
@@ -109,6 +118,12 @@ class Report:
                 "distances": [round(d, 2) for d in t.distances],
             },
             "history": self.history,
+            "anonymous": self.anonymous,
+            "zk": self.zk,
+            "credential_revoked_at": self.credential_revoked_at,
+            "passkey": self.passkey,
+            "meta_claims": self.meta_claims,
+            "pending": self.pending,
             "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
         }
 
@@ -119,13 +134,37 @@ def _png(img: np.ndarray | Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def _bundle_hash(bundle: dict) -> str:
+    return hashlib.sha256(json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _anonymous_registry(signer: Signer) -> tuple[dict, list[list[str]], int]:
+    """(device Baby Jubjub key, registry public keys, index of the device in the registry)."""
+    if signer != "device":
+        raise ValueError("anonymous signing is only for capture devices")
+    bjj = json.loads((keys_dir() / f"{signer}.json").read_text()).get("bjj")
+    reg = keys_dir() / "registry_devices.json"
+    if not bjj or not reg.exists():
+        raise ValueError("anonymous signing needs keys/device.json['bjj'] and keys/registry_devices.json")
+    pks = json.loads(reg.read_text())["pks"]
+    try:
+        return bjj, pks, [list(map(str, p)) for p in pks].index(list(map(str, bjj["pk"])))
+    except ValueError as e:
+        raise ValueError("this device is not in the anonymous registry") from e
+
+
 def sign_image(
-    rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None
+    rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None,
+    anonymous: bool = False,
 ) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
-    `parent`: tx hash of the signed version this image was edited from (version chain)."""
+    `parent`: tx hash of the signed version this image was edited from (version chain).
+    `anonymous`: prove membership of the device registry in zero knowledge instead of
+    publishing the device key and signature (decisions.md Q2-Q4)."""
     if parent is not None and (store.get(parent) is None or ledger.fetch_anchor(parent) is None):
         raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
+    if anonymous:
+        bjj, pks, index = _anonymous_registry(signer)
     key = load_key(signer)
     wm_id, original = b"", None
     if watermark.enabled():
@@ -134,14 +173,35 @@ def sign_image(
     # robust tree covers both versions: the gallery original must verify too
     manifest, disclosure = commit(rgb, os.urandom(32), original=original)
     manifest.wm_id = wm_id.hex()
-    manifest.signer = key.public_key
+    manifest.signer = "" if anonymous else key.public_key
+    manifest.anonymous = anonymous
     manifest.op = "ai_generate" if signer == "ai" else ("edit" if parent else "capture")
     manifest.parent = parent
     digest = manifest.digest()
-    anchor = ledger.anchor(digest, key.sign(digest), key.public_key)
+    bundle = None
+    if anonymous:
+        bundle = zk.prove_device(bjj["sk"], pks, index, digest)
+        anchor = ledger.anchor_anonymous(digest, bundle["public"][0], _bundle_hash(bundle))
+    else:
+        anchor = ledger.anchor(digest, key.sign(digest), key.public_key)
     png = _png(rgb)
     store.put(Entry(anchor.tx_hash, anchor.tx_hash, manifest, disclosure, phash(rgb)), png)
+    if bundle is not None:
+        store.put_bundle(anchor.tx_hash, bundle)
     return SignResult(anchor.tx_hash, anchor, manifest), png
+
+
+def _check_anonymous(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledger: Ledger) -> dict:
+    """Zero-knowledge device attestation: the proof must be the anchored one, cover this exact
+    manifest digest, verify, and use the registry root in force at anchor time."""
+    proof_ok = (
+        bundle is not None
+        and _bundle_hash(bundle) == anchor.bundle_hash
+        and list(bundle.get("public", [])) == [anchor.registry_root, *zk.split_digest(manifest.digest())]
+        and zk.verify_device(bundle["proof"], bundle["public"])
+    )
+    root_ok = proof_ok and ledger.registry_root_at(anchor.timestamp) == anchor.registry_root
+    return {"proof_ok": bool(proof_ok), "registry_root": anchor.registry_root, "root_valid_at_anchor": bool(root_ok)}
 
 
 def verify_image(
@@ -169,13 +229,29 @@ def verify_image(
     if anchor is None:
         reason = f"Anchor transaction {entry.tx_hash} not found on the ledger"
         return Report(FinalVerdict.UNKNOWN, reason, found_by, entry.id, None, None, False, None), None
-    sig_ok = verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
-    credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
+    zk_check = None
+    if anchor.anonymous:
+        zk_check = _check_anonymous(anchor, manifest, store.get_bundle(entry.tx_hash), ledger)
+        sig_ok = zk_check["proof_ok"]
+        credential = CredentialType.CAPTURE_DEVICE if zk_check["root_valid_at_anchor"] else None
+    else:
+        sig_ok = verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
+        credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
     tiles = verify(rgb, manifest, entry.disclosure)
     reason = ""
-    if anchor.digest != manifest.digest() or anchor.pubkey != manifest.signer:
+    if (
+        anchor.digest != manifest.digest()
+        or anchor.pubkey != manifest.signer
+        or anchor.anonymous != manifest.anonymous
+    ):
         verdict = FinalVerdict.UNKNOWN
         reason = "Stored manifest does not match the anchored digest"
+    elif anchor.anonymous and not sig_ok:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Zero-knowledge device proof is invalid or does not cover this manifest"
+    elif anchor.anonymous and credential is None:
+        verdict = FinalVerdict.UNKNOWN
+        reason = "Device registry root used by the proof was not in force at anchor time"
     elif not sig_ok:
         verdict = FinalVerdict.UNKNOWN
         reason = "Anchored signature does not verify against the signer key"
@@ -207,14 +283,21 @@ def verify_image(
             how = "match the original capture (unwatermarked)"
         else:
             how = "match after recompression"
-        reason = f"Signed by a {credential.value} credential; {n - c['redacted']}/{n} tiles {how}"
+        who = (
+            f"Signed anonymously by an accredited {credential.value} (zero-knowledge proof)"
+            if anchor.anonymous else f"Signed by a {credential.value} credential"
+        )
+        reason = f"{who}; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
             reason += f", {c['redacted']} redacted"
     else:
         verdict = FinalVerdict.UNKNOWN
         reason = "Signer has no valid credential (never issued or revoked)"
     history = _history(entry.tx_hash, ledger, store)
-    report = Report(verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history)
+    report = Report(
+        verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history,
+        anonymous=anchor.anonymous, zk=zk_check,
+    )
     hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
     return report, hm
 

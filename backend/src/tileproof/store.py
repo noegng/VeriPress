@@ -60,6 +60,14 @@ class Store:
             phash=int(d["phash"], 16),
         )
 
+    def put_bundle(self, entry_id: str, bundle: dict) -> None:
+        """Proof bundle of an anonymous / passkey signature (its sha256 is anchored)."""
+        (self.root / entry_id / "bundle.json").write_text(json.dumps(bundle, sort_keys=True, separators=(",", ":")))
+
+    def get_bundle(self, entry_id: str) -> dict | None:
+        p = self.root / entry_id / "bundle.json"
+        return json.loads(p.read_text()) if p.exists() else None
+
     def image_path(self, entry_id: str) -> Path:
         return self.root / entry_id / "image.png"
 

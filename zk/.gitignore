@@ -1,0 +1,6 @@
+node_modules/
+build/*.ptau
+build/*_0000.zkey
+build/*_js/
+build/*.r1cs
+build/*.sym
