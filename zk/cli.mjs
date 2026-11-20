@@ -6,6 +6,9 @@
 //   echo '{"pks": [["x","y"]], "depth": 10}' | node zk/cli.mjs root
 //   echo '{"sk","pks","index","digest","depth"}' | node zk/cli.mjs prove-device
 //   echo '{"proof","public"}' | node zk/cli.mjs verify-device
+//   echo '{"time","lat_e6","lon_e6","salt"}' | node zk/cli.mjs commit-meta
+//   echo '{…, "t_min","t_max","lat_min_e6","lat_max_e6","lon_min_e6","lon_max_e6"}' | node zk/cli.mjs prove-meta
+//   echo '{"proof","public"}' | node zk/cli.mjs verify-meta
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -97,12 +100,49 @@ const commands = {
   },
 
   async "verify-device"({ proof, public: pub }) {
-    const vkey = JSON.parse(readFileSync(join(BUILD, "device_vkey.json"), "utf8"));
-    let ok = false;
-    try { ok = await snarkjs.groth16.verify(vkey, pub, proof); } catch { ok = false; }
-    return { ok };
+    return { ok: await verifyWith("device", proof, pub) };
+  },
+
+  // ---- ZK B: capture time + GPS (meta.circom) ----
+
+  async "commit-meta"(m) {
+    const { poseidon, F } = await crypto();
+    const [t, la, lo, salt] = metaPrivate(m);
+    return { commitment: F.toObject(poseidon([t, la, lo, salt])).toString() };
+  },
+
+  async "prove-meta"(m) {
+    const { poseidon, F } = await crypto();
+    const [time, lat_s, lon_s, salt] = metaPrivate(m);
+    const input = {
+      commitment: F.toObject(poseidon([time, lat_s, lon_s, salt])).toString(),
+      t_min: String(m.t_min), t_max: String(m.t_max),
+      lat_min: String(shiftLat(m.lat_min_e6)), lat_max: String(shiftLat(m.lat_max_e6)),
+      lon_min: String(shiftLon(m.lon_min_e6)), lon_max: String(shiftLon(m.lon_max_e6)),
+      time: String(time), lat_s: String(lat_s), lon_s: String(lon_s), salt: String(salt),
+    };
+    const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+      input, join(BUILD, "meta.wasm"), join(BUILD, "meta_final.zkey"));
+    return { proof, public: publicSignals };
+  },
+
+  async "verify-meta"({ proof, public: pub }) {
+    return { ok: await verifyWith("meta", proof, pub) };
   },
 };
+
+const shiftLat = (e6) => BigInt(e6) + 90_000_000n;
+const shiftLon = (e6) => BigInt(e6) + 180_000_000n;
+
+function metaPrivate({ time, lat_e6, lon_e6, salt }) {
+  if (!/^[0-9a-fA-F]{62}$/.test(salt)) throw new Error("salt must be 31 bytes hex");
+  return [BigInt(time), shiftLat(lat_e6), shiftLon(lon_e6), BigInt("0x" + salt)];
+}
+
+async function verifyWith(circuit, proof, pub) {
+  const vkey = JSON.parse(readFileSync(join(BUILD, `${circuit}_vkey.json`), "utf8"));
+  try { return await snarkjs.groth16.verify(vkey, pub, proof); } catch { return false; }
+}
 
 const cmd = process.argv[2];
 if (!commands[cmd]) {

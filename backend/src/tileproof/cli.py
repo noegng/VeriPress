@@ -144,13 +144,18 @@ def cmd_demo(a: argparse.Namespace) -> int:
         if hm:
             (out / f"{name}.heatmap.png").write_bytes(hm)
         j = report.to_json()
-        summary[name] = {k: j[k] for k in ("verdict", "reason", "found_by", "credential", "anonymous")}
+        summary[name] = {k: j[k] for k in ("verdict", "reason", "found_by", "credential", "anonymous", "meta_claims")}
         summary[name]["tiles"] = j["tiles"]["counts"] if j["tiles"] else None
         print(f"{name:20} {j['verdict']:8} via {str(j['found_by']):9} {j['reason']}")
+        for c in j["meta_claims"]:
+            print(f"{'':20} {'✅' if c['proof_ok'] else '❌'} proven {c['kind']}: {c['label']}")
 
     src = load_rgb(a.image)
     h, w = src.shape[:2]
-    original, png = sign_image(src, "device", ledger, store)
+    from .metadata import exif_from_upload
+
+    exif = exif_from_upload(Path(a.image).read_bytes())  # capture day + area proven in ZK (step 8)
+    original, png = sign_image(src, "device", ledger, store, exif=exif)
     signed = rgb_of(png)
     check("1_capture", signed)
 
