@@ -22,6 +22,16 @@ Le cœur crypto (`commitment.py`, `pipeline.py`) appartient à Dev A : ne pas y 
 7. **Visualisation arbre ↔ image** : à partir de `tiles.statuses` + `grid`, afficher l'arbre de Merkle (feuilles = tuiles colorées, nœuds remontant jusqu'à la racine ancrée). Survoler une tuile met en évidence son chemin de preuve. Faire d'abord un `prototype` avec 2 ou 3 variantes.
 8. Vraie passkey WebAuthn côté navigateur (si Dev A n'est pas dessus).
 
+## Retours de la revue Dev A (20/11)
+
+Le reste est conforme : propriété des fichiers, routes et JSON de `interfaces.md`, validation des identifiants, limites de taille, échappement dans la page, clés en `chmod 600`. Signature et vérification testées dans le navigateur, sans erreur JS.
+
+1. **RAW via l'API** (prioritaire) : `read_image` fait `Image.open` puis `load_rgb`. Résultat : un CR3 est refusé (400 « cannot identify image file »), et un DNG n'est lu que par sa vignette (864 px au lieu de 4032). Remplacer par `tiling.load_upload(data, upload.filename)` (voir `interfaces.md`). Garder la limite de 40 MP, mais la vérifier sur `rgb.shape` après chargement, car un RAW ne donne pas sa taille avant d'être développé. `load_upload` lève `ValueError` si le fichier est illisible : continuer à le transformer en 400. Dans `index.html`, élargir `accept="image/*"` en `accept="image/*,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf"` : certains sélecteurs de fichiers grisent les RAW.
+2. **Mode hors ligne** : `make_ledger()` émet les Credentials du `FakeLedger` depuis `BACKEND / "keys"` en dur, alors que `signing.py` lit `TILEPROOF_KEYS`. Si cette variable pointe ailleurs, tout sort ⚪ « Signer has no valid credential » (reproduit dans le navigateur). Lire le même dossier : `signing.keys_dir()`.
+3. **Mineur** : mettre en majuscules `entry_id` (`/api/verify`, `/api/redact`), comme c'est déjà fait pour `parent`. Les tx hash sont en majuscules dans le store : un hash collé en minuscules marche sur macOS (système de fichiers insensible à la casse) mais échouera sur un serveur Linux. Pour une variante `-r1`, ne mettre en majuscules que la partie hex.
+
+À noter, aucune action demandée : Dev A corrige un faux 🟠 quand on vérifie l'**original non tatoué** d'une photo signée (l'écart dû au filigrane dépasse la tolérance dans certaines tuiles). Le contrat ne change pas.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. soir — marche :** `setup_testnet.py` (comptes + Credentials + `--revoke`/`--reissue`, testé sur Testnet), `XrplLedger` (test de fumée OK), `api.py` (toutes les routes, réponses simulées tant que `pipeline.py` lève `NotImplementedError`, en-tête `X-Tileproof-Mock`), `static/index.html` (Signer/Vérifier, heatmap, vérifié à 390 px).
