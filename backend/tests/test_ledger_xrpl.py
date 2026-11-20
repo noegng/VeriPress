@@ -96,3 +96,17 @@ def test_fast_anchoring_two_in_a_row():
         time.sleep(1)
     assert fa.validated and fb.validated
     print(f"both validated after {time.monotonic() - t0:.1f}s")
+
+
+def test_time_window_t0_before_t1():
+    """T0 = latest validated ledger before anchoring: a fresh ledger (fresh client, no cache)
+    confirms its close time from (index, hash), refuses a forged hash, and T0 <= T1."""
+    ledger = XrplLedger(keys_dir=KEYS)
+    index, ledger_hash, close = ledger.latest_validated()
+    device = json.loads((KEYS / "device.json").read_text())["public_key"]
+    anchor = ledger.anchor("cc" * 32, "ff" * 64, device, wait=True)
+    fresh = XrplLedger(keys_dir=KEYS)
+    assert fresh.ledger_close_time(index, ledger_hash) == close
+    assert fresh.ledger_close_time(index, "00" * 32) is None
+    assert close <= anchor.timestamp
+    print(f"\nT0 ledger {index} closed {close}, anchored {anchor.timestamp} ({anchor.timestamp - close}s window)")

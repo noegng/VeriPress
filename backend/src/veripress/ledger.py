@@ -230,6 +230,7 @@ class XrplLedger:
         self._submit_lock = threading.Lock()
         self._last_sequence: int | None = None
         self._fee: tuple[float, str] | None = None  # (fetched at, drops)
+        self._ledgers: dict[int, tuple[str, int]] = {}  # validated ledger index -> (hash, close time)
 
     def _request(self, req):
         """Read-only request with one retry: the public Testnet node sometimes drops a
@@ -476,6 +477,41 @@ class XrplLedger:
             return None
         return _passkey_from_uri(node.get("URI", ""))
 
+    # --- T0 lower bound: the signed manifest names the latest validated ledger -------------
+
+    def latest_validated(self) -> tuple[int, str, int]:
+        """(index, hash, close time unix) of the latest validated ledger. A ledger hash cannot be
+        known before that ledger closes, so an image whose signed manifest contains it was
+        signed after T0. One request (~1 s on the public node)."""
+        from xrpl.models.requests import Ledger as LedgerRequest
+
+        resp = self._request(LedgerRequest(ledger_index="validated"))
+        if not resp.is_successful() or not resp.result.get("validated"):
+            raise RuntimeError(f"latest validated ledger unavailable: {resp.result.get('error')}")
+        index, ledger_hash, close = _ledger_header(resp.result)
+        self._ledgers[index] = (ledger_hash, close)
+        return index, ledger_hash, close
+
+    def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None:
+        """Close time of validated ledger `ledger_index` if its hash is `ledger_hash`, else None
+        (no such ledger, not validated yet, or another hash: the claimed T0 never existed).
+        A validated ledger never changes, so the answer is cached for good."""
+        from xrpl.models.requests import Ledger as LedgerRequest
+
+        index = int(ledger_index)
+        hit = self._ledgers.get(index)
+        if hit is None:
+            resp = self._request(LedgerRequest(ledger_index=index))
+            if not resp.is_successful():
+                if resp.result.get("error") == "lgrNotFound":  # future, or outside the node's history
+                    return None
+                raise RuntimeError(f"ledger {index} unavailable: {resp.result.get('error')}")
+            if not resp.result.get("validated"):
+                return None
+            _, h, close = _ledger_header(resp.result)
+            hit = self._ledgers[index] = (h, close)
+        return hit[1] if hit[0] == str(ledger_hash).upper() else None
+
 
 PASSKEY_URI_PREFIX = "passkey:sha256:"
 
@@ -590,13 +626,16 @@ def _revoked_at(intervals_by_type, now: int) -> int | None:
     ends = [iv[1] for iv in latest if iv[1] is not None]
     return max(ends) if ends else None
 
-    # --- T0 lower bound (after the track slides) — TODO Dev B ---
 
-    def latest_validated(self) -> tuple[int, str, int]:
-        raise NotImplementedError("Dev B: `ledger` request, ledger_index='validated'")
+def _ledger_header(result: dict) -> tuple[int, str, int]:
+    """(index, hash upper-case, close time unix) from a `ledger` request result (API v1 or v2).
+    Close times are rounded to the ledger's close_time_resolution (10 s on Testnet)."""
+    from xrpl.utils import ripple_time_to_posix
 
-    def ledger_close_time(self, ledger_index: int, ledger_hash: str) -> int | None:
-        raise NotImplementedError("Dev B: `ledger` request at ledger_index, compare ledger_hash")
+    led = result.get("ledger", {})
+    index = int(result.get("ledger_index") or led["ledger_index"])
+    ledger_hash = str(result.get("ledger_hash") or led["ledger_hash"]).upper()
+    return index, ledger_hash, ripple_time_to_posix(int(led["close_time"]))
 
 
 def _close_time(result: dict) -> int:
