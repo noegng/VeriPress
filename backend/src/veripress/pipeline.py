@@ -336,7 +336,8 @@ def verify_image(
         verdict, reason, found_by, entry.id, anchor, credential, sig_ok, tiles, manifest.grid, history,
         anonymous=anchor.anonymous, zk=zk_check, credential_revoked_at=revoked_at,
         pending=not anchor.validated,
-        meta_claims=_meta_claims(manifest, store.get_meta(entry.tx_hash)),
+        # Claims describe the signed capture: only shown when the verdict ties this image to it.
+        meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
     )
     hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
     return report, hm
