@@ -73,3 +73,26 @@ def test_registry_root_in_force_matches_local_registry():
     ledger = XrplLedger(keys_dir=KEYS)
     pks = json.loads(reg.read_text())["pks"]
     assert ledger.registry_root_at(int(time.time()) + 60) == zk.root(pks)
+
+
+def test_fast_anchoring_two_in_a_row():
+    """wait=False returns at submission (validated=False); two quick anchors must not collide on
+    the account Sequence; both read back as pending at once, then as validated."""
+    import time
+
+    ledger = XrplLedger(keys_dir=KEYS)
+    device = json.loads((KEYS / "device.json").read_text())["public_key"]
+    t0 = time.monotonic()
+    a = ledger.anchor("ee" * 32, "ff" * 64, device, wait=False)
+    b = ledger.anchor("dd" * 32, "ff" * 64, device, wait=False)
+    print(f"\ntwo fast anchors submitted in {time.monotonic() - t0:.1f}s:", a.tx_hash[:12], b.tx_hash[:12])
+    assert not a.validated and not b.validated and a.tx_hash != b.tx_hash
+    first = ledger.fetch_anchor(a.tx_hash)
+    assert first is not None and first.digest == "ee" * 32  # never 'unknown' right after submission
+    for _ in range(30):
+        fa, fb = ledger.fetch_anchor(a.tx_hash), ledger.fetch_anchor(b.tx_hash)
+        if fa and fb and fa.validated and fb.validated:
+            break
+        time.sleep(1)
+    assert fa.validated and fb.validated
+    print(f"both validated after {time.monotonic() - t0:.1f}s")

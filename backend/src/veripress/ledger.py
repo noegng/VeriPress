@@ -31,8 +31,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -188,6 +189,10 @@ class XrplLedger:
         self.registry = json.loads((keys / "registry.json").read_text())["address"]
         self.wallet = Wallet.from_seed(json.loads((keys / "anchor.json").read_text())["seed"])
         self._history_cache: dict[str, tuple[float, list[dict]]] = {}
+        self._pending: dict[str, tuple[float, Anchor]] = {}  # fast anchors not validated yet
+        self._submit_lock = threading.Lock()
+        self._last_sequence: int | None = None
+        self._fee: tuple[float, str] | None = None  # (fetched at, drops)
 
     def _request(self, req):
         """Read-only request with one retry: the public Testnet node sometimes drops a
@@ -223,12 +228,13 @@ class XrplLedger:
         self._history_cache[address] = (time.monotonic(), entries)
         return entries
 
-    def _submit_anchor(self, data: dict, wait: bool = True) -> tuple[str, int]:
+    def _submit_anchor(self, data: dict, wait: bool = True) -> tuple[str, int, bool]:
         """Payment of 1 drop anchoring service -> registry carrying one veripress/v1 memo.
-        Returns (tx hash, ledger close time). wait=False (fast anchoring) lands with phase 2
-        task 5; until then it still waits, which is correct, only slower."""
+        Returns (tx hash, time, validated). wait=True: ledger close time once validated.
+        wait=False (fast anchoring): returns right after submission (submission time,
+        validated=False) if the node provisionally accepted it."""
         from xrpl.models.transactions import Memo, Payment
-        from xrpl.transaction import submit_and_wait
+        from xrpl.transaction import autofill, sign, submit, submit_and_wait
         from xrpl.utils import str_to_hex
 
         tx = Payment(
@@ -237,40 +243,91 @@ class XrplLedger:
             amount="1",
             memos=[Memo(memo_type=str_to_hex(MEMO_TYPE), memo_data=str_to_hex(_compact(data)))],
         )
-        resp = submit_and_wait(tx, self.client, self.wallet)
-        code = resp.result.get("meta", {}).get("TransactionResult")
-        if code != "tesSUCCESS":
-            raise RuntimeError(f"anchor tx failed: {code}")
-        return resp.result["hash"], _close_time(resp.result)
+        # One submission at a time, with a locally tracked Sequence: two quick signatures must
+        # not both get the sequence the (load-balanced) node reports, or the second fails.
+        # Sequence and fee are filled from local state when known: each lookup on the public
+        # node costs ~1 s (xrpl-py's JSON-RPC client opens a new TLS connection per request).
+        with self._submit_lock:
+            known = {}
+            if self._last_sequence is not None:
+                known["sequence"] = self._last_sequence + 1
+            if self._fee and time.monotonic() - self._fee[0] < FEE_TTL:
+                known["fee"] = self._fee[1]
+            if known:
+                tx = Payment.from_dict({**tx.to_dict(), **known})
+            try:
+                tx = autofill(tx, self.client)  # only what is still missing (LastLedgerSequence…)
+                self._fee = (time.monotonic(), tx.fee) if "fee" not in known else self._fee
+                signed = sign(tx, self.wallet)
+                if wait:
+                    resp = submit_and_wait(signed, self.client)
+                    code = resp.result.get("meta", {}).get("TransactionResult")
+                    if code != "tesSUCCESS":
+                        raise RuntimeError(f"anchor tx failed: {code}")
+                    self._last_sequence = signed.sequence
+                    return resp.result["hash"], _close_time(resp.result), True
+                resp = submit(signed, self.client)
+                result = resp.result.get("engine_result", "")
+                # tes = applied to the open ledger; ter = queued / retried by the node. Anything
+                # else (tec fee claimed, tef / tem / tel) will not anchor: fail now.
+                if not (result == "tesSUCCESS" or result.startswith("ter")):
+                    raise RuntimeError(f"anchor tx rejected: {result} {resp.result.get('engine_result_message', '')}")
+                self._last_sequence = signed.sequence
+                return signed.get_hash(), int(time.time()), False
+            except Exception:
+                # Resynchronise sequence and fee from the network on the next submission.
+                self._last_sequence, self._fee = None, None
+                raise
+
+    def _remember(self, a: Anchor) -> Anchor:
+        """Fast anchors are kept locally until validated: right after submission the public
+        node pool may not know the tx yet, and verifying it must say 'pending', not 'unknown'."""
+        if not a.validated:
+            self._pending[a.tx_hash] = (time.monotonic(), a)
+        return a
 
     def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
-        tx_hash, ts = self._submit_anchor({"d": digest, "s": signature, "k": pubkey}, wait)
-        return Anchor(tx_hash, digest, signature, pubkey, ts, EXPLORER + tx_hash)
+        tx_hash, ts, ok = self._submit_anchor({"d": digest, "s": signature, "k": pubkey}, wait)
+        return self._remember(Anchor(tx_hash, digest, signature, pubkey, ts, EXPLORER + tx_hash, validated=ok))
 
     def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
         """No device key nor signature on chain: the ZK proof (kept off-chain, its sha256 in
         "h") shows that SOME device of the registry root "r" signed the digest."""
-        tx_hash, ts = self._submit_anchor({"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}, wait)
-        return Anchor(tx_hash, digest, "", "", ts, EXPLORER + tx_hash,
-                      anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash)
+        tx_hash, ts, ok = self._submit_anchor({"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}, wait)
+        return self._remember(Anchor(tx_hash, digest, "", "", ts, EXPLORER + tx_hash, validated=ok,
+                                     anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash))
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         from xrpl.models.requests import Tx
 
+        tx_hash = tx_hash.upper()
         resp = self._request(Tx(transaction=tx_hash))
-        if not resp.is_successful() or not resp.result.get("validated"):
+        if not resp.is_successful():  # txnNotFound: maybe submitted a moment ago
+            hit = self._pending.get(tx_hash)
+            if hit and time.monotonic() - hit[0] < PENDING_TTL:
+                return hit[1]
+            self._pending.pop(tx_hash, None)
             return None
         r = resp.result
         tx = r.get("tx_json", r)  # API v2 nests fields under tx_json
+        validated = bool(r.get("validated"))
         if (
             tx.get("TransactionType") != "Payment"
             or tx.get("Destination") != self.registry
-            or r.get("meta", {}).get("TransactionResult") != "tesSUCCESS"
+            or (validated and r.get("meta", {}).get("TransactionResult") != "tesSUCCESS")
         ):
+            self._pending.pop(tx_hash, None)
             return None
         data = _memo_json(tx, MEMO_TYPE)
-        hash_ = r.get("hash", tx_hash).upper()
-        return _anchor_from_memo(data, hash_, _close_time(r)) if data is not None else None
+        if data is None:
+            return None
+        if validated:
+            self._pending.pop(tx_hash, None)
+            return _anchor_from_memo(data, r.get("hash", tx_hash).upper(), _close_time(r))
+        hit = self._pending.get(tx_hash)
+        submitted = hit[1].timestamp if hit else int(time.time())
+        a = _anchor_from_memo(data, r.get("hash", tx_hash).upper(), submitted)
+        return None if a is None else replace(a, validated=False)
 
     def registry_root_at(self, at_time: int) -> str | None:
         """Last root the registry published (AccountSet + veripress/registry-root/v1 memo)
@@ -391,6 +448,8 @@ def _anchor_from_memo(data: dict, tx_hash: str, timestamp: int) -> Anchor | None
 
 
 HISTORY_TTL = 3.0  # seconds
+PENDING_TTL = 120.0  # seconds a fast anchor is trusted locally while the network does not know it yet
+FEE_TTL = 60.0  # seconds a fetched network fee is reused
 
 # (start, end, expiration): valid on [start, end) and before expiration; end/expiration None = open.
 Interval = tuple[int, int | None, int | None]

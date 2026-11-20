@@ -7,11 +7,11 @@
 <style>
   :root {
     --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
-    --accent: #1f5eff; --real: #157347; --edited: #c2410c; --ai: #1864ab; --unknown: #5c636a;
+    --accent: #1f5eff; --accent-btn: #1f5eff; --real: #157347; --edited: #c2410c; --ai: #1864ab; --unknown: #5c636a;
     --radius: 14px;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; }
+    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; --accent-btn: #3563d9; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -50,7 +50,7 @@
   .seg input { display: none; }
   .seg input:checked + span { color: var(--accent); font-weight: 600; }
   input[type=text] { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: 14px ui-monospace, monospace; }
-  .btn { border: 0; background: var(--accent); color: #fff; font: inherit; font-weight: 600; padding: 12px 18px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn { border: 0; background: var(--accent-btn); color: #fff; font: inherit; font-weight: 600; padding: 12px 18px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
   .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
   .btn:disabled { opacity: .5; cursor: default; }
   .stage { position: relative; margin-top: 12px; border-radius: 10px; overflow: hidden; background: #000; line-height: 0; }
@@ -205,6 +205,21 @@ const $ = (id) => document.getElementById(id);
 let ONCHAIN = false; // set from /api/health: real XRPL ledger vs offline demo ledger
 const EXPLORER = "https://testnet.xrpl.org/transactions/";
 function fmtTime(ts) { return ts == null ? "—" : new Date(ts * 1000).toLocaleString(); }
+let pendingRetries = 0;
+// Fast anchoring: poll the light /api/anchor route until the tx is validated (~5-15 s).
+async function watchValidation(tx) {
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const a = await fetch(`/api/anchor/${encodeURIComponent(tx)}`).then((r) => (r.ok ? r.json() : null));
+      if (a && a.validated) {
+        $("signWhen").textContent = `✅ Tx ${short(tx)} validated on XRPL Testnet · ${fmtTime(a.timestamp)}`;
+        return;
+      }
+    } catch { /* keep polling */ }
+  }
+  $("signWhen").textContent = `Tx ${short(tx)} still pending — check the explorer`;
+}
 // Shareable read-only page (/v/<entry_id>) with social preview tags.
 function publicLink(id) {
   return id ? `<a href="/v/${encodeURIComponent(id)}" target="_blank" rel="noopener">🔗 /v/${esc(short(id))} ↗</a>` : null;
@@ -276,7 +291,7 @@ picker("signDrop", "signFile", (f) => {
   showPreview($("signPreview"), f); $("signStage").hidden = false;
 });
 picker("verifyDrop", "verifyFile", (f) => {
-  verifyFile = f; $("verifyBtn").disabled = false; $("verifyResult").hidden = true;
+  verifyFile = f; $("verifyBtn").disabled = false; $("verifyResult").hidden = true; pendingRetries = 0;
   $("txInput").value = ""; // a hash left from a previous image would bypass the watermark lookup
   showPreview($("verifyPreview"), f);
 });
@@ -313,16 +328,18 @@ $("signBtn").addEventListener("click", async () => {
   if (parent) fd.append("parent", parent);
   const anon = $("anonInput").checked;
   if (anon) fd.append("anonymous", "1");
+  fd.append("wait", "0"); // fast anchoring (decisions.md Q11): answer at submission, then poll
   const onChainLedger = $("status").textContent.startsWith("⛓️");
-  const busy = anon ? (onChainLedger ? "Proving + anchoring (~20 s)…" : "Proving (~5 s)…")
-    : onChainLedger ? "Anchoring on XRPL (~10 s)…" : "Signing…";
+  const busy = anon ? (onChainLedger ? "Proving + submitting to XRPL…" : "Proving (~5 s)…")
+    : onChainLedger ? "Submitting to XRPL…" : "Signing…";
   const res = await post("/api/sign", fd, $("signBtn"), $("signErr"), busy);
   if (!res) return;
   const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(res.explorer_url || "");
-  $("signWhen").textContent = onChain
-    ? `Tx ${short(res.tx_hash)} validated on XRPL Testnet`
-    : `Tx ${short(res.tx_hash)} — offline demo ledger (not on chain)`;
+  $("signWhen").textContent = !onChain ? `Tx ${short(res.tx_hash)} — offline demo ledger (not on chain)`
+    : res.pending ? `⏳ Tx ${short(res.tx_hash)} submitted — waiting for XRPL validation…`
+    : `Tx ${short(res.tx_hash)} validated on XRPL Testnet`;
   $("signExplorer").hidden = !onChain;
+  if (onChain && res.pending) watchValidation(res.tx_hash);
   $("signInfo").innerHTML = rows([
     ["Public link", publicLink(res.entry_id)],
     ["Entry", `<code>${esc(short(res.entry_id))}</code>`],
@@ -402,6 +419,11 @@ function showReport(r) {
   $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))}
     · ${txLink(h.tx_hash)}${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
   if (r.tiles) $("treeLeaves").textContent = `▦ leaves — ${r.tiles.grid.cols * r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}×${r.tiles.grid.tile} px`;
+  // Fast anchoring: a provisional verdict is re-checked a few times until the anchor validates.
+  if (r.pending && pendingRetries < 8) {
+    pendingRetries++;
+    setTimeout(() => { if (!$("verifyResult").hidden) $("verifyBtn").click(); }, 4000);
+  }
   buildTree(r.tiles);
   lastEntry = r.verdict !== "unknown" ? r.entry_id : null;
   stopRedact();

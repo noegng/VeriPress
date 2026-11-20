@@ -179,6 +179,19 @@ async def _verify_stored(entry_id: str) -> dict:
     return report.to_json(heatmap)
 
 
+@app.get("/api/anchor/{tx_hash}")
+async def anchor_status(tx_hash: str) -> dict:
+    """Light status of an anchor (fast anchoring: the page polls it until validated, instead of
+    re-running a full image verification)."""
+    tx = tx_hash.strip().upper()
+    if not PARENT.match(tx):
+        raise HTTPException(422, "tx hash must be hex")
+    a = await run_in_threadpool(app.state.ledger.fetch_anchor, tx)
+    if a is None:
+        raise HTTPException(404, "anchor not found")
+    return {"tx_hash": a.tx_hash, "validated": a.validated, "timestamp": a.timestamp, "explorer_url": a.explorer_url}
+
+
 @app.get("/api/entry/{entry_id}")
 async def entry(entry_id: str) -> dict:
     """/api/verify's JSON, computed on the published image kept in the store."""
@@ -239,6 +252,7 @@ async def sign(
     signer: str = Form("device"),
     parent: str | None = Form(None),
     anonymous: str | None = Form(None),
+    wait: str | None = Form(None),
 ):
     if signer not in ("device", "ai"):
         raise HTTPException(422, "signer must be device|ai")
@@ -246,6 +260,10 @@ async def sign(
     if parent and not PARENT.match(parent):
         raise HTTPException(422, "parent must be a tx hash")
     anon = (anonymous or "").strip().lower() in ("1", "true", "on")
+    # wait=0: fast anchoring, answer at submission (pending until validated). Default: wait.
+    # The offline FakeLedger has no consensus to wait for (and nothing would ever validate a
+    # pending tx in the backup demo), so it always anchors as validated.
+    wait_validated = (wait or "").strip() != "0" or isinstance(app.state.ledger, FakeLedger)
     data, rgb = await read_upload(image)
     # ZK B: capture time + GPS from the file's EXIF are committed in the signed manifest and
     # only proven as "day" / "~10 km area" claims. The published PNG carries no EXIF.
@@ -253,7 +271,8 @@ async def sign(
     try:
         result, _png = await run_in_threadpool(
             lambda: pipeline.sign_image(
-                rgb, signer, app.state.ledger, app.state.store, parent, anonymous=anon, exif=exif
+                rgb, signer, app.state.ledger, app.state.store, parent,
+                anonymous=anon, exif=exif, wait=wait_validated,
             )
         )
     except FileNotFoundError as e:  # keys/ missing
