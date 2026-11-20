@@ -17,6 +17,13 @@ Conventions (fixed):
 - Credential : issued by the registry account, CredentialType = hex of the enum value
                ("CAPTURE_DEVICE" / "AI_GENERATOR"), accepted by the subject.
                Revoked = CredentialDelete -> `credential_type` returns None.
+
+Phase 2 (details and memo formats: docs/interfaces.md § Phase 2):
+- anonymous anchor : MemoData {"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}
+- passkey anchor   : MemoData {"d": digest, "k": device ed25519 pubkey, "w": bundle_hash}
+- registry root    : registry -> registry, MemoType "tileproof/registry-root/v1",
+                     MemoData {"root", "depth", "n"}; the root in force at T = last published before T.
+- revocation is NOT retroactive: `credential_type(pk, at_time)` answers for the instant `at_time`.
 """
 
 from __future__ import annotations
@@ -43,22 +50,51 @@ class Anchor:
     digest: str
     signature: str
     pubkey: str
-    timestamp: int  # unix seconds (ledger close time)
+    timestamp: int  # unix seconds (ledger close time; submission time while not validated)
     explorer_url: str
+    # Phase 2 (defaults keep phase-1 code working)
+    validated: bool = True  # False while the tx is not validated yet (fast anchoring)
+    anonymous: bool = False
+    registry_root: str = ""  # anonymous mode: registry root used by the proof
+    bundle_hash: str = ""  # anonymous / passkey: sha256 hex of the proof bundle kept in store/
+    cid: str = ""  # option: IPFS CID of the disclosure
 
 
 class Ledger(Protocol):
-    def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
-        """Submit the anchor tx, wait for validation, return it."""
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        """Submit the anchor tx. wait=True: return once validated; wait=False: return right
+        after submission with validated=False (fast anchoring)."""
+        ...
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        """Anonymous anchor: no device key nor signature on chain, only the digest, the registry
+        root the ZK proof was made against and the hash of the stored proof bundle."""
         ...
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
-        """Read back an anchor tx. None if not found / not a tileproof memo."""
+        """Read back an anchor tx (also when not validated yet: validated=False).
+        None if not found / not a tileproof memo."""
         ...
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
-        """Valid (accepted, not expired, not deleted) credential of the key's account.
-        `at_time` may be ignored for the hackathon (current state only)."""
+        """Credential of the key's account valid AT `at_time` (accepted before, not deleted yet,
+        not expired then). Pass the anchor time: revocation is not retroactive.
+        at_time=None = current state."""
+        ...
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        """Unix time of the CredentialDelete that ended the key's credential, if it is
+        currently revoked; None if it is valid now or was never issued."""
+        ...
+
+    def credential_passkey(self, pubkey: str) -> str | None:
+        """sha256 hex of the P-256 passkey public key attested in the URI of the key's
+        CAPTURE_DEVICE credential ("passkey:sha256:<hex>"), or None."""
+        ...
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        """Root of the anonymous device registry in force at `at_time` (last one published
+        by the registry before that instant), or None."""
         ...
 
 
@@ -111,7 +147,9 @@ class XrplLedger:
         self.registry = json.loads((keys / "registry.json").read_text())["address"]
         self.wallet = Wallet.from_seed(json.loads((keys / "anchor.json").read_text())["seed"])
 
-    def anchor(self, digest: str, signature: str, pubkey: str) -> Anchor:
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        # wait=False (fast anchoring) lands with phase 2 task 5; until then it still waits,
+        # which is correct, only slower (validated=True).
         from xrpl.models.transactions import Memo, Payment
         from xrpl.transaction import submit_and_wait
         from xrpl.utils import str_to_hex
@@ -182,6 +220,20 @@ class XrplLedger:
             if node.get("Flags", 0) & LSF_ACCEPTED and not expired:
                 return ctype
         return None
+
+    # --- Phase 2: implemented by the Dev B feature PRs (tasks 1, 2, 6 in tasks-dev-b.md) ---
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        raise NotImplementedError("phase 2 task 1 (anonymous registry)")
+
+    def credential_revoked_at(self, pubkey: str) -> int | None:
+        raise NotImplementedError("phase 2 task 2 (non-retroactive revocation)")
+
+    def credential_passkey(self, pubkey: str) -> str | None:
+        raise NotImplementedError("phase 2 task 6 (passkey)")
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        raise NotImplementedError("phase 2 task 1 (anonymous registry)")
 
 
 def _close_time(result: dict) -> int:
