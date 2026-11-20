@@ -3,6 +3,7 @@
   veripress commit IMAGE -o OUT_DIR            -> OUT_DIR/{manifest,disclosure}.json + seed.bin (secret)
   veripress verify IMAGE MANIFEST DISCLOSURE [--heatmap out.png]
   veripress redact IMAGE MANIFEST DISCLOSURE --box x0,y0,x1,y1 [--box ...] -o OUT_DIR
+  veripress prepare-demo [--raw FILE] [--offline]  -> re-sign all pitch assets + demo/signed/RUNBOOK.md
   veripress demo-batch IMG... -o OUT_DIR       -> N photos anchored in one transaction
   veripress demo-raw RAW -o OUT_DIR            -> digital negative -> signed reference JPEG
   veripress demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
@@ -136,6 +137,131 @@ def cmd_export_disclosure(a: argparse.Namespace) -> int:
     (out / f"{cid}.json").write_bytes(data)
     print(f"{out / (cid + '.json')}  ({len(data)} bytes)")
     return 0
+
+
+def cmd_prepare_demo(a: argparse.Namespace) -> int:
+    """Re-sign every pitch asset on the real ledger, into the API's store, and check each one
+    the way the audience will (no id: watermark / perceptual lookup). Writes RUNBOOK.md."""
+    import io
+
+    import numpy as np
+
+    from . import watermark
+    from .batching import BatchingLedger
+    from .ledger import CredentialType, FakeLedger, XrplLedger
+    from .metadata import exif_from_upload
+    from .pipeline import redact_image, sign_image, verify_image
+    from .signing import keys_dir, load_key
+    from .store import Store
+
+    demo, out = Path(a.demo), Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    store = Store(a.store)
+    if a.offline:
+        ledger = FakeLedger()
+        ledger.issue(load_key("device").public_key, CredentialType.CAPTURE_DEVICE)
+        if (keys_dir() / "ai.json").exists():
+            ledger.issue(load_key("ai").public_key, CredentialType.AI_GENERATOR)
+    else:
+        ledger = XrplLedger()
+    assets: list[dict] = []
+
+    def rgb_of(png: bytes):
+        return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
+
+    def save(name: str, data) -> Path:
+        path = out / name
+        if isinstance(data, bytes):
+            path.write_bytes(data)
+        else:
+            Image.fromarray(data).save(path, quality=92)
+        return path
+
+    def check(name: str, data, expect: str, tx: str | None = None, note: str = "") -> None:
+        path = save(name, data)
+        report, _ = verify_image(load_rgb(path), ledger, store)
+        ok = report.verdict.value == expect
+        assets.append({"file": name, "expect": expect, "verdict": report.verdict.value, "ok": ok,
+                       "found_by": report.found_by, "tx": tx or (report.anchor.tx_hash if report.anchor else None),
+                       "explorer": report.anchor.explorer_url if report.anchor else None, "note": note})
+        print(f"{'✅' if ok else '❌'} {name:28} {report.verdict.value:8} via {str(report.found_by):9} {note}")
+
+    originals = sorted(p for p in (demo / "originals").iterdir() if p.is_file() and not p.name.startswith("."))
+    photo = demo / "originals" / a.photo
+    others = [p for p in originals if p.name != a.photo]
+    src = load_rgb(photo)
+    h, w = src.shape[:2]
+
+    res, png = sign_image(src, "device", ledger, store, exif=exif_from_upload(photo.read_bytes()))
+    signed = rgb_of(png)
+    check("1_signed.png", png, "real", res.anchor.tx_hash, "send THIS file through WhatsApp live (step 3)")
+    edited = signed.copy()
+    bh, bw = h // 5, w // 5
+    edited[h // 2: h // 2 + bh, w // 3: w // 3 + bw] = signed[h // 8: h // 8 + bh, w // 2: w // 2 + bw]
+    check("2_edited.jpg", _jpeg(edited, 92), "edited", note="copy-move retouch")
+    check("3_whatsapp_sim.jpg", _jpeg(signed, 72, scale=min(1.0, 1600 / max(h, w))), "real",
+          note="backup if the live WhatsApp step fails")
+    _, red = redact_image(signed, res.entry_id, [(w // 8, h // 4, w * 3 // 8, h // 2)], store)
+    check("4_redacted.png", red, "real", note="redacted area authenticated by hash")
+    if res.manifest.wm_id and others:
+        fake = watermark.embed(np.ascontiguousarray(load_rgb(others[0])), bytes.fromhex(res.manifest.wm_id))
+        check("5_copied_watermark.jpg", _jpeg(fake, 90), "unknown", note="watermark copied onto another photo")
+
+    ai_files = sorted(p for p in (demo / "ai").iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    if ai_files and (keys_dir() / "ai.json").exists():
+        ai_res, ai_png = sign_image(load_rgb(ai_files[0]), "ai", ledger, store)
+        check("6_ai_signed.png", ai_png, "ai", ai_res.anchor.tx_hash, ai_files[0].name)
+        ai_rgb = rgb_of(ai_png)
+        check("6_ai_whatsapp_sim.jpg", _jpeg(ai_rgb, 72, scale=min(1.0, 1600 / max(ai_rgb.shape[:2]))), "ai")
+
+    dev_keys = json.loads((keys_dir() / "device.json").read_text())
+    if "bjj" in dev_keys and (keys_dir() / "registry_devices.json").exists() and others:
+        an, an_png = sign_image(load_rgb(others[-1]), "device", ledger, store, anonymous=True)
+        check("7_anonymous_signed.png", an_png, "real", an.anchor.tx_hash, "zero-knowledge: device not revealed")
+
+    if a.raw:
+        raw, raw_png = sign_image(load_rgb(a.raw), "device", ledger, store)
+        check("9a_raw_negative.png", raw_png, "real", raw.anchor.tx_hash, Path(a.raw).name)
+        dev = Image.fromarray(rgb_of(raw_png))
+        dev.thumbnail((2400, 2400))
+        ref, ref_png = sign_image(_jpeg(np.asarray(dev), 92), "device", ledger, store,
+                                  parent=raw.entry_id, op="develop")
+        check("9b_reference_jpeg.png", ref_png, "real", ref.anchor.tx_hash, "developed from the signed RAW")
+
+    if others:
+        before, before_png = sign_image(load_rgb(others[0]), "device", ledger, store)
+        check("10_before_revocation.png", before_png, "real", before.anchor.tx_hash,
+              "then `setup_testnet.py --revoke device` live: stays 🟢 'revoked since'")
+
+    batch = BatchingLedger(ledger, store)
+    batch_signed = [sign_image(load_rgb(p), "device", batch, store) for p in originals[:3]]
+    batch_tx = batch.flush()
+    for i, (_, bpng) in enumerate(batch_signed, 1):
+        check(f"11_batch_{i}.png", bpng, "real", batch_tx, f"{len(batch_signed)} photos, 1 transaction")
+
+    summary = {"ledger": type(ledger).__name__, "assets": assets}
+    _write_json(out / "summary.json", summary)
+    lines = ["# VeriPress — demo assets", "", f"Ledger: **{summary['ledger']}** · store: `{a.store}`. "
+             "Re-run: `uv run python -m veripress.cli prepare-demo` (after any signing change).", "",
+             "| | File | Expected | Verdict | Found by | Transaction | Note |", "|---|---|---|---|---|---|---|"]
+    for x in assets:
+        tx = f"[{x['tx'][:10]}…]({x['explorer']})" if x["tx"] and x["explorer"] else (x["tx"] or "")
+        lines.append(f"| {'✅' if x['ok'] else '❌'} | `{x['file']}` | {x['expect']} | {x['verdict']} | "
+                     f"{x['found_by']} | {tx} | {x['note']} |")
+    lines += ["", "## Live steps", "",
+              "1. Show `1_signed.png` → 🟢 (C2PA present).",
+              "2. Send `1_signed.png` to yourself on WhatsApp, verify the received file → 🟢 found by watermark, C2PA gone.",
+              "3. `2_edited.jpg` → 🟠 heatmap · `4_redacted.png` → 🟢 with black tiles · `5_copied_watermark.jpg` → ⚪.",
+              "4. `6_ai_whatsapp_sim.jpg` → 🔵 · `7_anonymous_signed.png` → 🟢 anonymous (ZK).",
+              "5. Passkey: sign a photo with Touch ID in the page (laptop, localhost).",
+              "6. `9b_reference_jpeg.png` → 🟢 developed from the signed RAW (history).",
+              "7. `setup_testnet.py --revoke device`, verify `10_before_revocation.png` → 🟢 'revoked since'; "
+              "then `--reissue device`.",
+              "8. `11_batch_*.png` → same transaction for all.", ""]
+    (out / "RUNBOOK.md").write_text("\n".join(lines))
+    bad = [x["file"] for x in assets if not x["ok"]]
+    print(f"{len(assets) - len(bad)}/{len(assets)} as expected -> {out}/RUNBOOK.md")
+    return 0 if not bad else 1
 
 
 def cmd_demo_batch(a: argparse.Namespace) -> int:
@@ -401,6 +527,15 @@ def main(argv: list[str] | None = None) -> int:
     ex.add_argument("--store", default="store")
     ex.add_argument("-o", "--out", required=True)
     ex.set_defaults(fn=cmd_export_disclosure)
+
+    pd = sub.add_parser("prepare-demo", help="re-sign all pitch assets (real ledger, API store) + RUNBOOK.md")
+    pd.add_argument("--demo", default="../demo")
+    pd.add_argument("--store", default=os.environ.get("VERIPRESS_STORE", "store"))
+    pd.add_argument("-o", "--out", default="../demo/signed")
+    pd.add_argument("--photo", default="IMG_4110.HEIC", help="file in <demo>/originals for steps 1-5")
+    pd.add_argument("--raw", help="camera RAW / DNG for the negative -> reference JPEG step")
+    pd.add_argument("--offline", action="store_true", help="FakeLedger instead of XRPL (rehearsal without network)")
+    pd.set_defaults(fn=cmd_prepare_demo)
 
     db = sub.add_parser("demo-batch", help="sign N photos, anchor them in one transaction")
     db.add_argument("images", nargs="+")

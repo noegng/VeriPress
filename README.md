@@ -69,4 +69,8 @@ Designed to **complement** C2PA, not replace it.
 
 ## Team
 
-2 developers - 1 idea 
+2 developers - 1 idea
+
+## AI usage
+
+AI tools were used to build this project, as allowed by the track rules with full transparency: see [`AI-USAGE.md`](AI-USAGE.md).
