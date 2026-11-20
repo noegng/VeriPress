@@ -542,8 +542,14 @@ class XrplLedger:
             hit = self._ledgers[index] = (h, close)
         return hit[1] if hit[0] == str(ledger_hash).upper() else None
 
+    # --- Hybrid post-quantum key attestation — TODO Dev B ---
+
+    def credential_pq(self, pubkey: str) -> str | None:
+        raise NotImplementedError("Dev B: parse 'mldsa87:sha256:<hex>' in the CAPTURE_DEVICE credential URI")
+
 
 PASSKEY_URI_PREFIX = "passkey:sha256:"
+
 
 
 def passkey_uri(passkey_sha256: str) -> str:
@@ -669,11 +675,6 @@ def _ledger_header(result: dict) -> tuple[int, str, int]:
     index = int(result.get("ledger_index") or led["ledger_index"])
     ledger_hash = str(result.get("ledger_hash") or led["ledger_hash"]).upper()
     return index, ledger_hash, ripple_time_to_posix(int(led["close_time"]))
-
-    # --- Hybrid post-quantum key attestation — TODO Dev B ---
-
-    def credential_pq(self, pubkey: str) -> str | None:
-        raise NotImplementedError("Dev B: parse 'mldsa87:sha256:<hex>' in the CAPTURE_DEVICE credential URI")
 
 
 def _close_time(result: dict) -> int:
