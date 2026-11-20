@@ -207,7 +207,7 @@ def mock_verify(rgb: np.ndarray, verdict: str) -> dict:
 
 
 def _mock_heatmap(statuses: list[str], cols: int, rows: int) -> str:
-    colors = {"exact": (0, 0, 0, 0), "robust": (250, 200, 0, 90), "changed": (230, 40, 40, 160), "redacted": (0, 0, 0, 255)}
+    colors = {"exact": (0, 0, 0, 0), "robust": (250, 200, 0, 90), "changed": (232, 89, 12, 180), "redacted": (0, 0, 0, 255)}
     img = Image.new("RGBA", (cols, rows))
     img.putdata([colors[s] for s in statuses])
     buf = io.BytesIO()

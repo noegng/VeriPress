@@ -63,6 +63,13 @@
   .err { color: #c92a2a; margin-top: 10px; }
   .hint { color: var(--muted); font-size: 14px; margin: 12px 0 0; }
   canvas.overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  canvas.overlay.passive { pointer-events: none; }
+  h3.sub { font-size: 15px; margin: 18px 0 8px; } h3.sub small { color: var(--muted); font-weight: 400; }
+  #tree { width: 100%; height: 150px; display: block; transform: scaleY(-1); cursor: pointer; touch-action: none; }
+  #tree rect { stroke: var(--card); stroke-width: .6; vector-effect: non-scaling-stroke; }
+  #tree rect.path { stroke: var(--ink); stroke-width: 2; }
+  #tree rect.sib { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 2; }
+  .treeaxis { font-size: 12px; color: var(--muted); margin: 3px 0; }
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -3px; margin-right: 6px; }
   @keyframes s { to { transform: rotate(360deg); } }
   @media (max-width: 480px) { .counts { grid-template-columns: repeat(2, 1fr); } .badge strong { font-size: 22px; } }
@@ -124,6 +131,7 @@
       <div class="stage" id="verifyStage">
         <img id="verifyPreview" alt="Verified image">
         <img class="overlay" id="heatmap" alt="" hidden>
+        <canvas class="overlay passive" id="tileCanvas"></canvas>
         <canvas class="overlay" id="redactCanvas" hidden></canvas>
       </div>
       <div class="row" id="heatmapCtl" hidden>
@@ -136,6 +144,12 @@
         <span><i style="background:#000"></i>redacted</span>
       </div>
       <div class="counts" id="counts"></div>
+      <div id="treeBox" hidden>
+        <h3 class="sub">Merkle tree <small id="treeHint">— tap a tile or a node</small></h3>
+        <div class="treeaxis">⛓️ root — anchored on XRPL</div>
+        <svg id="tree" preserveAspectRatio="none" role="img" aria-label="Merkle tree of the image tiles"></svg>
+        <div class="treeaxis">▦ leaves — one per 32×32 tile</div>
+      </div>
       <dl id="verifyInfo"></dl>
       <div class="row" id="redactCtl" hidden>
         <button class="btn ghost" id="redactStart">✏️ Redact areas</button>
@@ -273,12 +287,98 @@ function showReport(r) {
     ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
     ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows}`)],
   ]);
+  buildTree(r.tiles);
   lastEntry = r.verdict !== "unknown" ? r.entry_id : null;
   stopRedact();
   $("redactCtl").hidden = !lastEntry;
   $("verifyResult").hidden = false;
   $("verifyResult").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// Merkle tree <-> image (option). Mirrors merkle.py: leaves in row-major order, pairs (i, i^1),
+// odd last node promoted. So node j at level k covers the contiguous leaves [j*2^k, (j+1)*2^k).
+const COLORS = { exact: "#1f9d55", robust: "#fab005", changed: "#e8590c", redacted: "#000000" };
+const RANK = { exact: 0, redacted: 1, robust: 2, changed: 3 };
+let tree = null; // { statuses, cols, rows, n, levels: [[status…]…], rects: [[SVGRect…]…] }
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function buildTree(tiles) {
+  const svg = $("tree");
+  svg.replaceChildren();
+  tree = null;
+  $("treeBox").hidden = !tiles?.statuses?.length;
+  clearTiles();
+  if (!tiles?.statuses?.length) return;
+  const st = tiles.statuses, n = st.length;
+  const levels = [st.slice()];
+  while (levels.at(-1).length > 1) {
+    const prev = levels.at(-1), next = [];
+    for (let i = 0; i < prev.length; i += 2) {
+      next.push(i + 1 < prev.length && RANK[prev[i + 1]] > RANK[prev[i]] ? prev[i + 1] : prev[i]);
+    }
+    levels.push(next);
+  }
+  const W = 1000, H = levels.length;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const rects = levels.map((lvl, k) => lvl.map((s, j) => {
+    const lo = j << k, hi = Math.min((j + 1) << k, n);
+    const r = document.createElementNS(SVGNS, "rect");
+    r.setAttribute("x", (lo / n) * W); r.setAttribute("width", ((hi - lo) / n) * W);
+    r.setAttribute("y", k); r.setAttribute("height", 1);
+    r.setAttribute("fill", COLORS[s] || "#888");
+    r.dataset.k = k; r.dataset.j = j;
+    svg.appendChild(r);
+    return r;
+  }));
+  tree = { st, n, cols: tiles.grid.cols, rows: tiles.grid.rows, levels, rects };
+}
+
+function clearTree() { $("tree").querySelectorAll(".path,.sib").forEach((r) => r.classList.remove("path", "sib")); }
+function tileCtx() {
+  const c = $("tileCanvas"), img = $("verifyPreview");
+  const w = img.clientWidth * devicePixelRatio, h = img.clientHeight * devicePixelRatio;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext("2d"); ctx.clearRect(0, 0, w, h); return ctx;
+}
+function clearTiles() { const c = $("tileCanvas"); c.getContext("2d").clearRect(0, 0, c.width, c.height); }
+function outlineTiles(lo, hi, color) {
+  const ctx = tileCtx(), c = $("tileCanvas"), tw = c.width / tree.cols, th = c.height / tree.rows;
+  ctx.fillStyle = "rgba(255,255,255,.18)"; ctx.strokeStyle = color; ctx.lineWidth = 2 * devicePixelRatio;
+  for (let i = lo; i < hi; i++) {
+    const x = (i % tree.cols) * tw, y = Math.floor(i / tree.cols) * th;
+    ctx.fillRect(x, y, tw, th); ctx.strokeRect(x + 1, y + 1, tw - 2, th - 2);
+  }
+}
+function showLeafPath(i) {
+  clearTree();
+  for (let k = 0, j = i; k < tree.levels.length; k++, j >>= 1) {
+    tree.rects[k][j].classList.add("path");
+    if ((j ^ 1) < tree.levels[k].length) tree.rects[k][j ^ 1].classList.add("sib");
+  }
+  outlineTiles(i, i + 1, "#fff");
+  const proof = tree.levels.slice(0, -1).filter((lvl, k) => ((i >> k) ^ 1) < lvl.length).length;
+  $("treeHint").textContent = `— tile #${i} (row ${Math.floor(i / tree.cols)}, col ${i % tree.cols}): ${tree.st[i]}, proof = ${proof} sibling hashes`;
+}
+function showNode(k, j) {
+  clearTree();
+  tree.rects[k][j].classList.add("path");
+  const lo = j << k, hi = Math.min((j + 1) << k, tree.n);
+  outlineTiles(lo, hi, "#fff");
+  $("treeHint").textContent = k === tree.levels.length - 1
+    ? `— root: commits to all ${tree.n} tiles, anchored on XRPL`
+    : `— level ${k} node: covers tiles ${lo}–${hi - 1} (${tree.levels[k][j]})`;
+}
+$("verifyStage").addEventListener("pointermove", (e) => {
+  if (!tree || !$("redactCanvas").hidden) return;
+  const r = $("verifyPreview").getBoundingClientRect();
+  const col = Math.floor(((e.clientX - r.left) / r.width) * tree.cols), row = Math.floor(((e.clientY - r.top) / r.height) * tree.rows);
+  if (col >= 0 && col < tree.cols && row >= 0 && row < tree.rows) showLeafPath(row * tree.cols + col);
+});
+$("verifyStage").addEventListener("pointerleave", () => { if (tree) { clearTree(); clearTiles(); } });
+$("tree").addEventListener("pointermove", (e) => {
+  const t = e.target.closest?.("rect"); if (tree && t) showNode(+t.dataset.k, +t.dataset.j);
+});
+$("tree").addEventListener("pointerleave", () => { if (tree) { clearTree(); clearTiles(); } });
 
 // Redaction (option): draw boxes in displayed coords, send them in image pixel coords.
 let lastEntry = null, boxes = [], drag = null;
