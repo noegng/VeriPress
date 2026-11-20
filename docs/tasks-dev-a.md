@@ -22,6 +22,17 @@ Lire d'abord [`team-rules.md`](team-rules.md) et [`interfaces.md`](interfaces.md
 8. ~~Vraie passkey WebAuthn~~ → décidé le 20/11 : laissée à Dev B (P-256 ≠ clés XRPL, il faut lier la passkey au compte XRPL de l'appareil).
 9. Chaîne de versions : champ `parent` dans le manifeste, `verify_image` remonte la chaîne.
 
+## Phase 2 (contrat : `interfaces.md` § Phase 2 ; décisions : `decisions.md`)
+
+1. **ZK A** : `zk/` (circuit circom `device.circom` = EdDSA-Poseidon + inclusion Merkle de profondeur 10, entrées publiques `root`, `digest_hi`, `digest_lo`), `setup.sh` (powers of tau Hermez + zkey), `cli.mjs` (`keygen`, `root`, `prove-device`, `verify-device`), wrapper `tileproof/zk.py`. Pipeline : `sign_image(anonymous=True)` → paquet de preuve dans le store, `anchor_anonymous` ; verdict : preuve valide + `registry_root_at(anchor time) == racine` → 🟢 anonyme. TDD sur les règles de verdict (preuve fausse, racine périmée, digest échangé). `FakeLedger` : `anchor_anonymous`, `registry_root_at`.
+2. **Révocation non rétroactive** (côté pipeline) : passer `anchor.timestamp` à `credential_type`, et renseigner `credential_revoked_at` dans le rapport.
+3. **`verify_stored`** pour le lien public.
+4. **ZK B** : `metadata.py` (EXIF `DateTimeOriginal` + GPS → entiers ; jour et zone de 10 km), circuit `meta.circom` (Poseidon + comparaisons d'intervalles), `commit-meta` / `prove-meta` / `verify-meta`, `meta_commitment` dans le manifeste, `meta_claims` dans le rapport.
+5. **`pending`** (ancrage rapide) : verdict provisoire si `anchor.validated` est faux.
+6. **C2PA** : `c2pa_embed.py`, manifeste dans le PNG publié (assertion personnalisée avec tx hash et digest), certificat de test généré dans `keys/` (non commité).
+7. **WebAuthn côté serveur** : `prepare_passkey_sign` / `complete_passkey_sign`, vérification ECDSA P-256 de l'assertion (`authenticatorData ‖ sha256(clientDataJSON)`, challenge = digest), comparaison avec `credential_passkey`.
+8. **CID** / 9. **ancrage groupé** : si libre.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **20/11 — engagement double** (trouvé à la revue de l'API) : l'original non tatoué d'une photo signée sortait 🟠, car l'écart dû au filigrane atteint 20 pas dans certaines tuiles. Corrigé : la feuille robuste engage les descripteurs de la version tatouée **et** de l'original (`TileDisclosure.g`), et une tuile est conforme si elle est proche de l'une ou de l'autre. Aucun réseau de neurones n'intervient dans le verdict. Sur les 4 photos réelles : original, copie WhatsApp de l'original, version signée et version signée passée par WhatsApp → 🟢. Une retouche d'une demi-tuile reste détectée à 97 %.

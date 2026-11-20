@@ -21,6 +21,7 @@ Un agent **ne modifie que les fichiers de son dev**. S'il a besoin d'un changeme
 | `backend/src/tileproof/watermark.py` | `backend/tests/test_ledger*.py`, `test_api*.py` | `backend/tests/conftest.py` (ajouts seulement) |
 | `backend/src/tileproof/cli.py`, `features.py`, `tiling.py`, `merkle.py` | | |
 | `backend/tests/` (sauf les fichiers de B) | | |
+| **Phase 2 :** `zk/**`, `backend/src/tileproof/zk.py`, `metadata.py`, `c2pa_embed.py`, WebAuthn dans `signing.py` | **Phase 2 :** `/v/<tx>` (page + route), routes passkey, ancrage rapide et `credential_*`/`registry_root_at` dans `XrplLedger`, publication des racines dans `scripts/` | `FakeLedger` : Dev A le complète pour ses tests, Dev B le garde aligné sur `XrplLedger` |
 
 ## 3. Git
 
