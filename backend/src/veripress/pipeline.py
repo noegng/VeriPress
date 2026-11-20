@@ -41,6 +41,7 @@ from .commitment import Disclosure, Manifest, Verdict, VerifyResult, commit, hea
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
 from . import c2pa_embed, metadata, watermark, zk
+from .contentaddr import canonical_json, cid_v1_raw
 from .signing import keys_dir, load_key, verify_signature, verify_webauthn
 from .store import Entry, Store
 
@@ -105,6 +106,7 @@ class Report:
     meta_claims: list[dict] = field(default_factory=list)
     pending: bool = False
     time_window: dict | None = None  # {"not_before", "not_after", "ledger_index", "t0_ok"}
+    disclosure_cid: str | None = None
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
         """Shape: docs/interfaces.md "POST /api/verify"."""
@@ -135,6 +137,7 @@ class Report:
             "meta_claims": self.meta_claims,
             "pending": self.pending,
             "time_window": self.time_window,
+            "disclosure_cid": self.disclosure_cid,
             "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
         }
 
@@ -188,6 +191,7 @@ def _prepare(
     # robust tree covers both versions: the gallery original must verify too
     manifest, disclosure = commit(rgb, os.urandom(32), original=original)
     manifest.wm_id = wm_id.hex()
+    manifest.disclosure_cid = cid_v1_raw(canonical_json(disclosure.to_dict()))  # mirrors can be checked
     manifest.signer = "" if anonymous else signer_pubkey
     manifest.anonymous = anonymous
     manifest.passkey = passkey
@@ -512,6 +516,7 @@ def verify_image(
         anonymous=anchor.anonymous, zk=zk_check, credential_revoked_at=revoked_at,
         pending=not anchor.validated,
         time_window=_time_window(manifest, anchor, ledger),
+        disclosure_cid=manifest.disclosure_cid or None,
         passkey=is_passkey,
         # Claims describe the signed capture: only shown when the verdict ties this image to it.
         meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
