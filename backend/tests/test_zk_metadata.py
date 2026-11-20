@@ -125,3 +125,14 @@ def test_claims_copied_from_another_photo_do_not_verify(photo, setup):
     (store.root / a.entry_id / "meta.json").write_text((store.root / b.entry_id / "meta.json").read_text())
     report, _ = verify_image(png_to_rgb(png_a), ledger, store, entry_id=a.entry_id)
     assert report.meta_claims and all(c["proof_ok"] is False for c in report.meta_claims)
+
+
+def test_claims_are_not_shown_when_the_image_is_not_vouched_for(photo, setup):
+    """Review of the Testnet run: a copied watermark gave ⚪ yet showed "taken on 20 Nov near …".
+    The claims describe the signed capture: without a verdict tying the image to it, hide them."""
+    ledger, store = setup
+    signed, png = sign_image(photo, "device", ledger, store, exif=exif_bytes())
+    ledger.revoke(next(iter(ledger.credentials)), at=0)  # revoked before anchoring -> unknown
+    report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
+    assert report.verdict.value == "unknown"
+    assert report.meta_claims == []
