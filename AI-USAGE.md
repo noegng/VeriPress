@@ -6,9 +6,13 @@ IXH26 Track 1 rules allow AI tools **with full transparency**: declare which too
 
 | Tool | Used by | For |
 |---|---|---|
-| **Claude Code** (Anthropic CLI agent), with the `mattpocock-skills` plugin (grilling, TDD, code review, PR writing). Dev A's sessions ran *Claude Opus 5.5* | Dev A and Dev B, each in their own sessions (Dev B's commit messages reference his Claude Code sessions) | Design discussions, code generation, tests, reviews, documentation |
+| **Claude Code** (Anthropic CLI agent). Both developers' sessions ran *Claude Opus 5.5*. Dev A's sessions used the `mattpocock-skills` plugin (grilling, TDD, code review, PR writing) | Dev A and Dev B, each in their own sessions | Design discussions, code generation, tests, reviews, documentation |
 | Claude Code **sub-agents** | Dev A | Two-axis code review (standards / spec), and a first draft of the business-model document |
+| Claude Code `web-fetch` sub-agent | Dev B | Looking at the interfaces of other XRPL hackathon projects for UI ideas |
 | `agent-browser` (headless browser driven by Claude Code) | Dev A | Checking the web page end to end (sign → verify, no JS errors) |
+| Chrome DevTools (MCP server driven by Claude Code) | Dev B | Checking the web page in a real browser against XRPL Testnet (sign → share → verify, batch, passkey, presentation mode), with screenshots |
+| Claude Code design skills `impeccable` and `unslop` | Dev B | Web page redesign for the pitch: a throwaway prototype with three variants of the verdict card (the team chose one), then layout, typography and accessibility passes |
+| Claude Code `/security-review` command | Dev B | The XRPL and API part of the security review ([`docs/security-review.md`](docs/security-review.md)) |
 | **Google Gemini** (image generator) | Team | The AI-generated demo image (`demo/ai/`), signed with the `AI_GENERATOR` credential |
 | Stable Diffusion image (Wikimedia Commons, CC0) | Team | Second AI-generated test image |
 | Adobe **TrustMark** (neural network) | — | Part of the **product**: the invisible watermark. It is a component, not an assistant |
@@ -20,10 +24,11 @@ IXH26 Track 1 rules allow AI tools **with full transparency**: declare which too
 - Claude Code also proposed technical designs: the dual robust commitment, the time window [T0, T1], aggregated anchoring, the hybrid Ed25519 + ML-DSA-87 signature… The team approved each one before it was built. When the AI changed its mind after review (e.g. re-watermarking at verification time was replaced by the dual commitment for security reasons), it says so in the PR.
 
 ### Code generation
-- **Most of the code was written by Claude Code** under the developers' direction: Dev A's part (Python backend: tiling, Merkle commitment, pipeline and verdicts, ZK circuits and CLI, metadata proofs, C2PA, passkey verification, post-quantum signature, batching, CLI) and Dev B's part (XRPL ledger, setup script, FastAPI API, web page), developed with his own Claude Code sessions (*Dev B: confirm or adjust*).
+- **Most of the code was written by Claude Code** under the developers' direction: Dev A's part (Python backend: tiling, Merkle commitment, pipeline and verdicts, ZK circuits and CLI, metadata proofs, C2PA, passkey verification, post-quantum signature, batching, CLI) and Dev B's part (XRPL ledger: anchoring, device credentials and revocation, time window, batch anchoring, post-quantum attestation; Testnet setup script; FastAPI API; web page and its pitch redesign), developed in Dev B's own Claude Code sessions (confirmed by Dev B).
+- Commit messages are not a complete record: Dev B's first 14 commits link to their Claude Code session, later ones do not. This file is the reference.
 - **Method that keeps it in check:**
   - test-driven development: a failing test first, then the code;
-  - about 220 automated tests, including dedicated security tests;
+  - about 290 automated tests, including dedicated security tests;
   - calibration on our own phone photos really sent through WhatsApp;
   - a security review ([`docs/security-review.md`](docs/security-review.md));
   - full rehearsals on XRPL Testnet;
