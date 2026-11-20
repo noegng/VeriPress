@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TileProof</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
+    --accent: #1f5eff; --real: #1f9d55; --edited: #e8590c; --ai: #1c7ed6; --unknown: #868e96;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .tag { color: var(--muted); font-size: 14px; }
+  .mock { display: none; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #fff3bf; color: #7a5b00; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--line); padding: 4px; border-radius: 12px; margin-bottom: 16px; }
+  .tabs button { border: 0; padding: 12px; border-radius: 9px; font: inherit; font-weight: 600; background: transparent; color: var(--muted); cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  section[hidden] { display: none; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  label.drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 22px 12px; text-align: center; cursor: pointer; color: var(--muted); }
+  label.drop:hover, label.drop.over { border-color: var(--accent); color: var(--ink); }
+  label.drop input { display: none; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg label { padding: 9px 14px; cursor: pointer; }
+  .seg input { display: none; }
+  .seg input:checked + span { color: var(--accent); font-weight: 600; }
+  input[type=text] { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: 14px ui-monospace, monospace; }
+  .btn { border: 0; background: var(--accent); color: #fff; font: inherit; font-weight: 600; padding: 12px 18px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .stage { position: relative; margin-top: 12px; border-radius: 10px; overflow: hidden; background: #000; line-height: 0; }
+  .stage img { width: 100%; height: auto; display: block; }
+  .stage img.overlay { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; transition: opacity .2s; }
+  .stage img:not(.overlay) { transition: filter .2s; }
+  .stage.dim img:not(.overlay) { filter: grayscale(.85) brightness(.75); }
+  a { color: var(--accent); }
+  .badge { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 12px; color: #fff; }
+  .badge .dot { font-size: 40px; line-height: 1; }
+  .badge strong { font-size: 26px; display: block; letter-spacing: -0.01em; }
+  .badge small { opacity: .9; }
+  .v-real { background: var(--real); } .v-edited { background: var(--edited); }
+  .v-ai { background: var(--ai); } .v-unknown { background: var(--unknown); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; font-size: 14px; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  code { font: 13px ui-monospace, monospace; }
+  .counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .counts div { border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+  .counts b { display: block; font-size: 22px; }
+  .counts span { font-size: 12px; color: var(--muted); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  .err { color: #c92a2a; margin-top: 10px; }
+  .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -3px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  @media (max-width: 480px) { .counts { grid-template-columns: repeat(2, 1fr); } .badge strong { font-size: 22px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Tile<span>Proof</span></h1>
+    <span class="tag">Image provenance anchored on XRPL</span>
+    <span class="mock" id="mockTag">mock data</span>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="sign">Sign</button>
+    <button role="tab" aria-selected="false" data-tab="verify">Verify</button>
+  </div>
+
+  <section id="tab-sign">
+    <div class="card">
+      <label class="drop" id="signDrop">
+        <input type="file" accept="image/*" capture="environment" id="signFile">
+        <div>📷 <b>Take or choose a photo</b><br><small>Signed and anchored on XRPL Testnet</small></div>
+      </label>
+      <div class="stage" id="signStage" hidden><img id="signPreview" alt="Image to sign"></div>
+      <div class="row">
+        <div class="seg">
+          <label><input type="radio" name="signer" value="device" checked><span>📱 Capture device</span></label>
+          <label><input type="radio" name="signer" value="ai"><span>🤖 AI generator</span></label>
+        </div>
+        <button class="btn" id="signBtn" disabled>Sign &amp; anchor</button>
+      </div>
+      <div class="err" id="signErr"></div>
+    </div>
+    <div class="card" id="signResult" hidden>
+      <div class="badge v-real"><span class="dot">⛓️</span><div><strong>Anchored</strong><small id="signWhen"></small></div></div>
+      <dl id="signInfo"></dl>
+      <div class="row">
+        <a class="btn" id="signDownload" download>⬇ Download signed image</a>
+        <a class="btn ghost" id="signExplorer" target="_blank" rel="noopener">View on XRPL explorer ↗</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-verify" hidden>
+    <div class="card">
+      <label class="drop" id="verifyDrop">
+        <input type="file" accept="image/*" id="verifyFile">
+        <div>🔍 <b>Choose an image to verify</b><br><small>Even after WhatsApp / screenshots</small></div>
+      </label>
+      <div class="row">
+        <input type="text" id="txInput" placeholder="tx hash (optional)" autocomplete="off" spellcheck="false">
+        <button class="btn" id="verifyBtn" disabled>Verify</button>
+      </div>
+      <div class="err" id="verifyErr"></div>
+    </div>
+    <div class="card" id="verifyResult" hidden>
+      <div class="badge" id="badge"><span class="dot" id="badgeDot"></span><div><strong id="badgeTitle"></strong><small id="badgeReason"></small></div></div>
+      <div class="stage" id="verifyStage">
+        <img id="verifyPreview" alt="Verified image">
+        <img class="overlay" id="heatmap" alt="" hidden>
+      </div>
+      <div class="row" id="heatmapCtl" hidden>
+        <label><input type="checkbox" id="heatmapToggle" checked> Show tile heatmap</label>
+      </div>
+      <div class="legend" id="legend" hidden>
+        <span><i style="border:1px solid var(--muted)"></i>exact (no overlay)</span>
+        <span><i style="background:#fab005"></i>recompressed</span>
+        <span><i style="background:#e8590c"></i>changed</span>
+        <span><i style="background:#000"></i>redacted</span>
+      </div>
+      <div class="counts" id="counts"></div>
+      <dl id="verifyInfo"></dl>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const VERDICTS = {
+  real:    { dot: "🟢", title: "Real",         cls: "v-real" },
+  edited:  { dot: "🟠", title: "Edited",       cls: "v-edited" },
+  ai:      { dot: "🔵", title: "AI-generated", cls: "v-ai" },
+  unknown: { dot: "⚪", title: "Unknown",      cls: "v-unknown" },
+};
+const mockVerdict = new URLSearchParams(location.search).get("mock");
+
+// Tabs
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  for (const t of ["sign", "verify"]) $("tab-" + t).hidden = t !== b.dataset.tab;
+}));
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function short(h) { return h && h.length > 20 ? h.slice(0, 10) + "…" + h.slice(-6) : h; }
+function safeUrl(u) { try { const x = new URL(u, location.href); return ["https:", "http:"].includes(x.protocol) ? x.href : "#"; } catch { return "#"; } }
+function rows(pairs) { return pairs.filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join(""); }
+
+// File pickers (click or drag & drop) with preview
+function picker(dropId, inputId, onFile) {
+  const drop = $(dropId), input = $(inputId);
+  input.addEventListener("change", () => input.files[0] && onFile(input.files[0]));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) onFile(f); });
+}
+let signFile = null, verifyFile = null;
+picker("signDrop", "signFile", (f) => {
+  signFile = f; $("signBtn").disabled = false; $("signResult").hidden = true;
+  $("signPreview").src = URL.createObjectURL(f); $("signStage").hidden = false;
+});
+picker("verifyDrop", "verifyFile", (f) => {
+  verifyFile = f; $("verifyBtn").disabled = false; $("verifyResult").hidden = true;
+  $("verifyPreview").src = URL.createObjectURL(f);
+});
+
+async function post(url, form, btn, errEl) {
+  const label = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Working…'; errEl.textContent = "";
+  try {
+    const r = await fetch(url, { method: "POST", body: form });
+    $("mockTag").style.display = r.headers.get("X-Tileproof-Mock") ? "inline-block" : "none";
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    return body;
+  } catch (e) {
+    errEl.textContent = "⚠ " + e.message; return null;
+  } finally { btn.disabled = false; btn.innerHTML = label; }
+}
+
+// Sign
+$("signBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("image", signFile);
+  fd.append("signer", document.querySelector("input[name=signer]:checked").value);
+  const res = await post("/api/sign", fd, $("signBtn"), $("signErr"));
+  if (!res) return;
+  $("signWhen").textContent = `Tx ${short(res.tx_hash)} validated on XRPL Testnet`;
+  $("signInfo").innerHTML = rows([
+    ["Entry", `<code>${esc(short(res.entry_id))}</code>`],
+    ["Signer key", `<code>${esc(short(res.signer))}</code>`],
+    ["Manifest digest", `<code>${esc(short(res.digest))}</code>`],
+    ["Tiles", res.grid && `${res.grid.cols} × ${res.grid.rows} (${res.grid.cols * res.grid.rows} tiles of ${res.grid.tile}px)`],
+    ["Exact root", `<code>${esc(short(res.roots?.exact))}</code>`],
+    ["Robust root", `<code>${esc(short(res.roots?.robust))}</code>`],
+  ]);
+  $("signDownload").href = safeUrl(res.image_url);
+  $("signExplorer").href = safeUrl(res.explorer_url);
+  $("txInput").value = res.tx_hash || "";
+  $("signResult").hidden = false;
+  $("signResult").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// Verify
+function applyHeatmapToggle() {
+  const on = $("heatmapToggle").checked && !$("heatmap").hidden;
+  $("heatmap").style.opacity = on ? 1 : 0;
+  $("verifyStage").classList.toggle("dim", on);
+}
+$("heatmapToggle").addEventListener("change", applyHeatmapToggle);
+$("verifyBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("image", verifyFile);
+  const tx = $("txInput").value.trim();
+  if (tx) fd.append("entry_id", tx);
+  const url = "/api/verify" + (mockVerdict ? `?mock=${encodeURIComponent(mockVerdict)}` : "");
+  const res = await post(url, fd, $("verifyBtn"), $("verifyErr"));
+  if (res) showReport(res);
+});
+
+function showReport(r) {
+  const v = VERDICTS[r.verdict] || VERDICTS.unknown;
+  $("badge").className = "badge " + v.cls;
+  $("badgeDot").textContent = v.dot;
+  $("badgeTitle").textContent = r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)" : v.title;
+  $("badgeReason").textContent = r.reason || "";
+
+  const hm = $("heatmap");
+  if (r.heatmap_png_b64) { hm.src = "data:image/png;base64," + r.heatmap_png_b64; hm.hidden = false; }
+  else { hm.hidden = true; hm.removeAttribute("src"); }
+  $("heatmapCtl").hidden = $("legend").hidden = !r.heatmap_png_b64;
+  applyHeatmapToggle();
+
+  const c = r.tiles?.counts;
+  $("counts").innerHTML = c ? [["exact", "exact"], ["robust", "recompressed"], ["changed", "changed"], ["redacted", "redacted"]]
+    .map(([k, l]) => `<div><b>${Number(c[k] || 0)}</b><span>${l}</span></div>`).join("") : "";
+
+  const a = r.anchor;
+  $("verifyInfo").innerHTML = rows([
+    ["Found by", r.found_by && esc({ tx_hash: "tx hash", watermark: "invisible watermark", phash: "perceptual hash" }[r.found_by] || r.found_by)],
+    ["Credential", r.credential && esc(r.credential)],
+    ["Signature", r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
+    ["Anchored", a && esc(new Date(a.timestamp * 1000).toLocaleString())],
+    ["Transaction", a && `<a href="${esc(safeUrl(a.explorer_url))}" target="_blank" rel="noopener"><code>${esc(short(a.tx_hash))}</code> ↗</a>`],
+    ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
+    ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows}`)],
+  ]);
+  $("verifyResult").hidden = false;
+  $("verifyResult").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+</script>
+</body>
+</html>
