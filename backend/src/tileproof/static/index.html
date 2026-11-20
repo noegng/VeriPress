@@ -28,6 +28,13 @@
   ol.history li::before { content: ""; position: absolute; left: -6px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
   ol.history li.bad::before { background: #c92a2a; }
   details.more { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  label.check { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 15px; cursor: pointer; }
+  label.check input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+  label.check small { color: var(--muted); }
+  label.check.off { opacity: .45; cursor: default; }
+  ul.claims { list-style: none; padding: 0; margin: 8px 0 0; font-size: 15px; }
+  ul.claims li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  ul.claims li:last-child { border-bottom: 0; }
   details.more input { width: 100%; margin-top: 8px; }
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--line); padding: 4px; border-radius: 12px; margin-bottom: 16px; }
   .tabs button { border: 0; padding: 12px; border-radius: 9px; font: inherit; font-weight: 600; background: transparent; color: var(--muted); cursor: pointer; }
@@ -107,6 +114,12 @@
           <label><input type="radio" name="signer" value="device" checked><span>📱 Capture device</span></label>
           <label><input type="radio" name="signer" value="ai"><span>🤖 AI generator</span></label>
         </div>
+      </div>
+      <label class="check" id="anonRow">
+        <input type="checkbox" id="anonInput">
+        <span>🕶️ <b>Sign anonymously</b><br><small>A zero-knowledge proof shows that an accredited device signed — not which one.</small></span>
+      </label>
+      <div class="row">
         <button class="btn" id="signBtn" disabled>Sign &amp; anchor</button>
       </div>
       <details class="more">
@@ -162,6 +175,10 @@
         <div class="treeaxis" id="treeLeaves">▦ leaves — one per tile</div>
       </div>
       <dl id="verifyInfo"></dl>
+      <div id="claimsBox" hidden>
+        <h2 class="sub">Proven claims <small>— zero-knowledge, exact time and place stay private</small></h2>
+        <ul class="claims" id="claims"></ul>
+      </div>
       <div id="historyBox" hidden>
         <h2 class="sub">Version history</h2>
         <ol class="history" id="history"></ol>
@@ -274,13 +291,27 @@ async function post(url, form, btn, errEl, busy = "Working…") {
 }
 
 // Sign
+// Anonymous signing is for capture devices only (an AI key never enters the device registry).
+function syncAnon() {
+  const ai = document.querySelector("input[name=signer]:checked").value === "ai";
+  $("anonInput").disabled = ai;
+  if (ai) $("anonInput").checked = false;
+  $("anonRow").classList.toggle("off", ai);
+}
+document.querySelectorAll("input[name=signer]").forEach((r) => r.addEventListener("change", syncAnon));
+syncAnon();
+
 $("signBtn").addEventListener("click", async () => {
   const fd = new FormData();
   fd.append("image", signFile);
   fd.append("signer", document.querySelector("input[name=signer]:checked").value);
   const parent = $("parentInput").value.trim();
   if (parent) fd.append("parent", parent);
-  const busy = $("status").textContent.startsWith("⛓️") ? "Anchoring on XRPL (~10 s)…" : "Signing…";
+  const anon = $("anonInput").checked;
+  if (anon) fd.append("anonymous", "1");
+  const onChainLedger = $("status").textContent.startsWith("⛓️");
+  const busy = anon ? (onChainLedger ? "Proving + anchoring (~20 s)…" : "Proving (~5 s)…")
+    : onChainLedger ? "Anchoring on XRPL (~10 s)…" : "Signing…";
   const res = await post("/api/sign", fd, $("signBtn"), $("signErr"), busy);
   if (!res) return;
   const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(res.explorer_url || "");
@@ -290,7 +321,8 @@ $("signBtn").addEventListener("click", async () => {
   $("signExplorer").hidden = !onChain;
   $("signInfo").innerHTML = rows([
     ["Entry", `<code>${esc(short(res.entry_id))}</code>`],
-    ["Signer key", `<code>${esc(short(res.signer))}</code>`],
+    ["Signer key", res.anonymous ? "🕶️ hidden — zero-knowledge proof of an accredited device" : `<code>${esc(short(res.signer))}</code>`],
+    ["Registry root", res.registry_root && `<code>${esc(short(res.registry_root))}</code>`],
     ["Manifest digest", `<code>${esc(short(res.digest))}</code>`],
     ["Tiles", res.grid && `${res.grid.cols} × ${res.grid.rows} (${res.grid.cols * res.grid.rows} tiles of ${res.grid.tile}px)`],
     ["Exact root", `<code>${esc(short(res.roots?.exact))}</code>`],
@@ -324,7 +356,8 @@ function showReport(r) {
   const v = VERDICTS[r.verdict] || VERDICTS.unknown;
   $("badge").className = "badge " + v.cls;
   $("badgeDot").textContent = v.dot;
-  $("badgeTitle").textContent = r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)" : v.title;
+  $("badgeTitle").textContent = r.verdict === "unknown" ? "Unknown — no provenance (≠ fake)"
+    : r.verdict === "real" && r.anonymous ? "Real — accredited device (anonymous)" : v.title;
   $("badgeReason").textContent = r.reason || "";
 
   const hm = $("heatmap");
@@ -343,12 +376,20 @@ function showReport(r) {
     ["Credential", r.credential && esc(r.credential)],
     // Non-retroactive revocation: the photo was anchored while the device was trusted.
     ["Device status", r.credential_revoked_at ? `⚠️ revoked since ${esc(fmtTime(r.credential_revoked_at))} (after this photo was anchored)` : null],
-    ["Signature", r.entry_id ? (r.signature_ok ? "✅ valid" : "❌ invalid") : null],
+    ["Signature", !r.entry_id ? null
+      : r.zk ? (r.zk.proof_ok ? "✅ zero-knowledge proof valid" : "❌ zero-knowledge proof invalid")
+      : r.signature_ok ? "✅ valid" : "❌ invalid"],
+    ["Registry root", r.zk && `<code>${esc(short(r.zk.registry_root))}</code> · ${r.zk.root_valid_at_anchor ? "✅ in force when anchored" : "❌ not in force when anchored"}`],
     ["Anchored", a && esc(fmtTime(a.timestamp))],
     ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
-    ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
+    ["Signer key", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "🕶️ hidden (anonymous)" : null)],
     ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
   ]);
+  // Claims proven in zero knowledge from the signed metadata commitment (ZK B): never the
+  // exact time or position, only "taken on day D" / "within ~10 km of …".
+  const claims = r.meta_claims || [];
+  $("claimsBox").hidden = claims.length === 0;
+  $("claims").innerHTML = claims.map((c) => `<li>${c.proof_ok ? "✅" : "❌"} ${esc({ day: "Taken on", area: "Taken within" }[c.kind] || c.kind)} <b>${esc(c.label)}</b></li>`).join("");
   const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", ai_generate: "🤖 AI-generated" };
   const hist = r.history || [];
   $("historyBox").hidden = hist.length < 2;
