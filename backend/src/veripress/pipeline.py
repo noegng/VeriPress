@@ -410,18 +410,9 @@ def verify_image(
     if anchor is None:
         reason = f"Anchor transaction {entry.tx_hash} not found on the ledger"
         return Report(FinalVerdict.UNKNOWN, reason, found_by, entry.id, None, None, False, None), None
-    zk_check, passkey_attested = None, None
-    is_passkey = bool(anchor.bundle_hash and not anchor.signature and not anchor.anonymous)
-    if anchor.anonymous:
-        zk_check = _check_anonymous(anchor, manifest, store.get_bundle(entry.tx_hash), ledger)
-        sig_ok = zk_check["proof_ok"]
-        credential = CredentialType.CAPTURE_DEVICE if zk_check["root_valid_at_anchor"] else None
-    elif anchor.bundle_hash and not anchor.signature:  # passkey (WebAuthn) signature
-        sig_ok, passkey_attested = _check_passkey(anchor, manifest, store.get_bundle(entry.tx_hash), ledger)
-        credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
-    else:
-        sig_ok = verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
-        credential = ledger.credential_type(anchor.pubkey, anchor.timestamp)
+    auth = _authenticate(anchor, manifest, entry.tx_hash, ledger, store)
+    sig_ok, credential, zk_check = auth["sig_ok"], auth["credential"], auth["zk"]
+    is_passkey, passkey_attested = auth["passkey"], auth["passkey_attested"]
     # Non-retroactive revocation: the credential was valid at anchor time but has been revoked since.
     revoked_at = None
     if not anchor.anonymous and credential is not None:
@@ -430,11 +421,7 @@ def verify_image(
             revoked_at = None
     tiles = verify(rgb, manifest, entry.disclosure)
     reason = ""
-    if (
-        anchor.digest != manifest.digest()
-        or anchor.pubkey != manifest.signer
-        or anchor.anonymous != manifest.anonymous
-    ):
+    if not auth["manifest_matches"]:
         verdict = FinalVerdict.UNKNOWN
         reason = "Stored manifest does not match the anchored digest"
     elif anchor.anonymous and not sig_ok:
@@ -470,12 +457,17 @@ def verify_image(
         neg = store.get(manifest.parent) if manifest.parent else None
         chain_ok = (
             all(h["verified"] for h in history) and len(history) >= 2 and history[1]["op"] == "capture"
-            and neg is not None and neg.manifest.signer == manifest.signer
+            and neg is not None and not manifest.anonymous and not neg.manifest.anonymous
+            and bool(manifest.signer) and neg.manifest.signer == manifest.signer  # "same device" provable
         )
         if chain_ok:
             verdict = FinalVerdict.AI if credential == CredentialType.AI_GENERATOR else FinalVerdict.REAL
             reason = (f"Developed from the signed RAW negative {manifest.parent} by the same "
                       f"{credential.value}; {len(tiles.statuses)} tiles match the published development")
+        elif manifest.anonymous or (neg is not None and neg.manifest.anonymous):
+            verdict = FinalVerdict.EDITED
+            reason = (f"Signed development of {manifest.parent}; anonymous signatures cannot prove "
+                      "it was developed by the device that captured it")
         else:
             verdict = FinalVerdict.EDITED
             reason = f"Signed development of {manifest.parent}; the original version could not be verified"
@@ -541,8 +533,33 @@ def _utc(ts: int) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _authenticate(anchor: Anchor, manifest: Manifest, tx_hash: str, ledger: Ledger, store: Store) -> dict:
+    """Who vouches for this anchored manifest, per signing mode (named Ed25519, anonymous ZK,
+    passkey WebAuthn). Used for the record itself AND every step of its version chain."""
+    out = {"sig_ok": False, "credential": None, "zk": None, "passkey": False, "passkey_attested": None,
+           "manifest_matches": anchor.digest == manifest.digest() and anchor.pubkey == manifest.signer
+           and anchor.anonymous == manifest.anonymous}
+    if anchor.anonymous:
+        z = _check_anonymous(anchor, manifest, store.get_bundle(tx_hash), ledger)
+        out.update(zk=z, sig_ok=z["proof_ok"],
+                   credential=CredentialType.CAPTURE_DEVICE if z["root_valid_at_anchor"] else None)
+    elif anchor.bundle_hash and not anchor.signature:  # passkey (WebAuthn)
+        ok, attested = _check_passkey(anchor, manifest, store.get_bundle(tx_hash), ledger)
+        out.update(sig_ok=ok, passkey=True, passkey_attested=attested,
+                   credential=ledger.credential_type(anchor.pubkey, anchor.timestamp))
+    else:
+        out.update(sig_ok=verify_signature(anchor.digest, anchor.signature, anchor.pubkey),
+                   credential=ledger.credential_type(anchor.pubkey, anchor.timestamp))
+    out["verified"] = bool(
+        out["manifest_matches"] and out["sig_ok"]
+        and (not anchor.anonymous or out["credential"] is not None)  # root in force at anchor time
+        and (not out["passkey"] or out["passkey_attested"])
+    )
+    return out
+
+
 def _history(tx_hash: str | None, ledger: Ledger, store: Store, max_depth: int = 20) -> list[dict]:
-    """Walk the `parent` chain; each step checks the stored manifest against its anchor."""
+    """Walk the `parent` chain; each step is authenticated like the record itself."""
     out: list[dict] = []
     while tx_hash and len(out) < max_depth:
         entry, anchor = store.get(tx_hash), ledger.fetch_anchor(tx_hash)
@@ -550,7 +567,7 @@ def _history(tx_hash: str | None, ledger: Ledger, store: Store, max_depth: int =
             out.append({"tx_hash": tx_hash, "op": None, "timestamp": None, "verified": False})
             break
         m = entry.manifest
-        ok = anchor.digest == m.digest() and verify_signature(anchor.digest, anchor.signature, anchor.pubkey)
+        ok = _authenticate(anchor, m, tx_hash, ledger, store)["verified"]
         out.append({"tx_hash": tx_hash, "op": m.op, "timestamp": anchor.timestamp, "verified": ok})
         tx_hash = m.parent if ok else None
     return out
