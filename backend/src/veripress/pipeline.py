@@ -287,6 +287,8 @@ def complete_passkey_sign(
     if time.monotonic() - prep.created > PASSKEY_PREP_TTL_S:
         raise KeyError(prep_id)
     manifest, digest = prep.manifest, prep.manifest.digest()
+    if str(assertion.get("credential_id", "")) != str(_passkey_registration().get("credential_id", "")):
+        raise ValueError("assertion made with another credential than the registered passkey")
     verify_webauthn(assertion, digest, manifest.passkey)
     if ledger.credential_passkey(manifest.signer) != _sha256_hex(manifest.passkey):
         raise ValueError("this passkey is not attested by the registry for the device (setup_testnet.py --passkey)")

@@ -168,8 +168,12 @@ def cmd_demo(a: argparse.Namespace) -> int:
     _, red_png = redact_image(signed, original.entry_id, [(w // 8, h // 8, w * 3 // 8, h * 3 // 8)], store)
     check("4_redacted", rgb_of(red_png))
 
-    wm_id = bytes.fromhex(original.manifest.wm_id)
-    check("5_copied_watermark", _jpeg(embed(np.ascontiguousarray(np.rot90(src, 2)), wm_id), 85))
+    if original.manifest.wm_id:
+        wm_id = bytes.fromhex(original.manifest.wm_id)
+        check("5_copied_watermark", _jpeg(embed(np.ascontiguousarray(np.rot90(src, 2)), wm_id), 85))
+    else:  # no watermark to copy (backup demo without the TrustMark models)
+        summary["5_copied_watermark"] = {"skipped": "watermark disabled (VERIPRESS_WATERMARK=0)"}
+        print(f"{'5_copied_watermark':20} skipped  (watermark disabled)")
 
     ai_src = load_rgb(a.ai) if a.ai else np.ascontiguousarray(src[:, ::-1])
     _, ai_png = sign_image(ai_src, "ai", ledger, store)

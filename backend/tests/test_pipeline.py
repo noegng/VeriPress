@@ -73,7 +73,9 @@ def test_ai_generator_signed_image_is_ai(photo, ledger, store):
 
 def test_revoked_credential_is_unknown(photo, ledger, store, keys):
     signed, png = sign_image(photo, "device", ledger, store)
-    ledger.revoke(keys["device"])
+    # Revoked as of the anchor second: revocation is not retroactive, so an undated revoke() that
+    # lands a second after anchoring (C2PA makes signing slower) would rightly leave it REAL.
+    ledger.revoke(keys["device"], at=ledger.fetch_anchor(signed.entry_id).timestamp)
     report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
     assert report.verdict == FinalVerdict.UNKNOWN
     assert report.credential is None

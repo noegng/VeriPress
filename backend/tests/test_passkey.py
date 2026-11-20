@@ -154,3 +154,12 @@ def test_named_and_anonymous_sign_results_carry_the_phase2_keys(photo, env):
     ledger, store, _, _ = env
     j = sign_image(photo, "device", ledger, store)[0].to_json()
     assert j["anonymous"] is False and j["passkey"] is False and j["pending"] is False and j["meta_claims"] == []
+
+
+def test_assertion_for_another_credential_id_is_refused(photo, env):
+    ledger, store, authn, _ = env
+    prep = prepare_passkey_sign(photo, store, ledger=ledger)
+    assertion = authn.assert_(prep["challenge"])
+    assertion["credential_id"] = b64u(b"some-other-credential")
+    with pytest.raises(ValueError, match="credential"):
+        complete_passkey_sign(prep["prep_id"], assertion, ledger, store)
