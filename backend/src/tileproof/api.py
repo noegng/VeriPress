@@ -1,36 +1,50 @@
 """HTTP API — OWNER: Dev B.  Routes and JSON shapes: docs/interfaces.md.
 
     uv run uvicorn tileproof.api:app --reload            # TILEPROOF_LEDGER=fake (default)
-    TILEPROOF_LEDGER=xrpl uv run uvicorn tileproof.api:app
+    TILEPROOF_LEDGER=xrpl uv run uvicorn tileproof.api:app --host 0.0.0.0
 
-Calls only `pipeline.*`. While Dev A's pipeline raises NotImplementedError, the routes
-answer with the example JSON of interfaces.md (header `X-Tileproof-Mock: 1`), so the page
-can be built in parallel. `?mock=real|edited|ai|unknown` picks the mocked verdict.
+Calls only `pipeline.*`. Pipeline work (≈2 s CPU) and XRPL anchoring (waits for validation)
+are blocking, so they run in the threadpool to keep the event loop responsive.
 """
 
 from __future__ import annotations
 
-import base64
 import io
 import json
+import logging
 import os
 import re
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from . import pipeline
+from . import pipeline, watermark
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
 from .store import Store
 
+try:  # iPhone photos are HEIC
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:  # pragma: no cover
+    pass
+
+log = logging.getLogger("tileproof.api")
 BACKEND = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_UPLOAD = 25 * 1024 * 1024
 MAX_PIXELS = 40_000_000
-ENTRY_ID = re.compile(r"^[0-9A-Fa-f]{16,64}(-r\d+)?$")
+TX_HASH = r"[0-9A-Fa-f]{16,64}"
+ENTRY_ID = re.compile(rf"^{TX_HASH}(-r\d+)?$")
+PARENT = re.compile(rf"^{TX_HASH}$")
+# signing.py resolves keys relative to the CWD; pin it so uvicorn works from any directory.
+os.environ.setdefault("TILEPROOF_KEYS", str(BACKEND / "keys"))
 
 
 def make_ledger() -> Ledger:
@@ -48,7 +62,24 @@ def make_ledger() -> Ledger:
     return ledger
 
 
-app = FastAPI(title="TileProof")
+def _warm_up() -> None:
+    try:
+        watermark.warm_up()
+        log.info("watermark models ready")
+    except Exception:  # noqa: BLE001 — the API still works, sign/verify will retry the load
+        log.exception("watermark warm-up failed")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # TrustMark downloads its models on first use (~3 min): start now, in the background,
+    # so the page is served immediately.
+    if watermark.enabled():
+        threading.Thread(target=_warm_up, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="TileProof", lifespan=lifespan)
 app.state.ledger = make_ledger()
 app.state.store = Store(os.environ.get("TILEPROOF_STORE", BACKEND / "store"))
 
@@ -64,12 +95,8 @@ async def read_image(upload: UploadFile) -> np.ndarray:
         # Phones store photos rotated + an EXIF flag; apply it so pixels match what users see.
         img = ImageOps.exif_transpose(img)
         return np.asarray(img.convert("RGB"))
-    except (UnidentifiedImageError, OSError) as e:
+    except (UnidentifiedImageError, OSError, ValueError) as e:
         raise HTTPException(400, f"not a readable image: {e}") from e
-
-
-def mocked(body: dict) -> JSONResponse:
-    return JSONResponse(body, headers={"X-Tileproof-Mock": "1"})
 
 
 @app.get("/")
@@ -79,7 +106,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "ledger": type(app.state.ledger).__name__}
+    return {"ok": True, "ledger": type(app.state.ledger).__name__, "watermark": watermark.enabled()}
 
 
 @app.get("/api/files/{name}")
@@ -94,28 +121,34 @@ def files(name: str) -> FileResponse:
 
 
 @app.post("/api/sign")
-async def sign(image: UploadFile = File(...), signer: str = Form("device")):
+async def sign(image: UploadFile = File(...), signer: str = Form("device"), parent: str | None = Form(None)):
     if signer not in ("device", "ai"):
         raise HTTPException(422, "signer must be device|ai")
+    parent = (parent or "").strip().upper() or None
+    if parent and not PARENT.match(parent):
+        raise HTTPException(422, "parent must be a tx hash")
     rgb = await read_image(image)
     try:
-        result, _png = pipeline.sign_image(rgb, signer, app.state.ledger, app.state.store)
-        return result.to_json()
-    except NotImplementedError:
-        return mocked(mock_sign(rgb, signer))
+        result, _png = await run_in_threadpool(
+            pipeline.sign_image, rgb, signer, app.state.ledger, app.state.store, parent
+        )
+    except FileNotFoundError as e:  # keys/ missing
+        raise HTTPException(503, f"signing key missing — run scripts/setup_testnet.py ({e.filename})") from e
+    except RuntimeError as e:  # anchor tx rejected
+        raise HTTPException(502, str(e)) from e
+    return result.to_json()
 
 
 @app.post("/api/verify")
-async def verify(request: Request, image: UploadFile = File(...), entry_id: str | None = Form(None)):
+async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None)):
     entry_id = (entry_id or "").strip() or None
     if entry_id and not ENTRY_ID.match(entry_id):
         raise HTTPException(422, "entry_id / tx_hash must be hex")
     rgb = await read_image(image)
-    try:
-        report, heatmap = pipeline.verify_image(rgb, app.state.ledger, app.state.store, entry_id)
-        return report.to_json(heatmap)
-    except NotImplementedError:
-        return mocked(mock_verify(rgb, request.query_params.get("mock", "edited")))
+    report, heatmap = await run_in_threadpool(
+        pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id
+    )
+    return report.to_json(heatmap)
 
 
 @app.post("/api/redact")
@@ -124,92 +157,13 @@ async def redact(image: UploadFile = File(...), entry_id: str = Form(...), boxes
         raise HTTPException(422, "entry_id must be hex")
     try:
         parsed = [tuple(int(v) for v in b) for b in json.loads(boxes)]
-        if not parsed or any(len(b) != 4 for b in parsed):
+        if not parsed or len(parsed) > 64 or any(len(b) != 4 for b in parsed):
             raise ValueError
     except (ValueError, TypeError) as e:
         raise HTTPException(422, "boxes must be JSON [[x0,y0,x1,y1], …]") from e
     rgb = await read_image(image)
     try:
-        new_id, _png = pipeline.redact_image(rgb, entry_id, parsed, app.state.store)
-        return {"entry_id": new_id, "image_url": f"/api/files/{new_id}.png"}
-    except NotImplementedError:
-        new_id = f"{entry_id}-r1"
-        return mocked({"entry_id": new_id, "image_url": f"/api/files/{new_id}.png"})
-
-
-# --- mocks (removed at the sync once pipeline.py is ready) -------------------------------
-
-MOCK_TX = "A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4E5F60718293A4B5C6D7E8F90"
-MOCK_PUB = "ED" + "12" * 32
-
-
-def _grid(rgb: np.ndarray) -> dict:
-    h, w = rgb.shape[:2]
-    return {"cols": -(-w // 32), "rows": -(-h // 32), "tile": 32}
-
-
-def mock_sign(rgb: np.ndarray, signer: str) -> dict:
-    return {
-        "entry_id": MOCK_TX,
-        "tx_hash": MOCK_TX,
-        "explorer_url": f"https://testnet.xrpl.org/transactions/{MOCK_TX}",
-        "digest": "9f" * 32,
-        "signer": MOCK_PUB,
-        "grid": _grid(rgb),
-        "roots": {"exact": "ab" * 32, "robust": "cd" * 32},
-        "image_url": f"/api/files/{MOCK_TX}.png",
-    }
-
-
-def mock_verify(rgb: np.ndarray, verdict: str) -> dict:
-    if verdict == "unknown":
-        return {
-            "verdict": "unknown", "reason": "No provenance found (no tx_hash, watermark or perceptual match)",
-            "found_by": None, "entry_id": None, "anchor": None, "credential": None,
-            "signature_ok": False, "tiles": None, "heatmap_png_b64": None,
-        }
-    grid = _grid(rgb)
-    cols, rows = grid["cols"], grid["rows"]
-    statuses = ["exact"] * (cols * rows)
-    if verdict == "edited":  # a changed block in the middle, a few recompressed tiles around it
-        for r in range(rows // 3, rows // 3 + max(1, rows // 4)):
-            for c in range(cols // 3, cols // 3 + max(1, cols // 4)):
-                statuses[r * cols + c] = "changed"
-        for i in range(0, len(statuses), 7):
-            if statuses[i] == "exact":
-                statuses[i] = "robust"
-    dist = {"exact": 0.0, "robust": 1.2, "changed": 37.5, "redacted": 0.0}
-    counts = {k: statuses.count(k) for k in ("exact", "robust", "changed", "redacted")}
-    credential = "AI_GENERATOR" if verdict == "ai" else "CAPTURE_DEVICE"
-    reasons = {
-        "real": f"Signed by a CAPTURE_DEVICE credential; {counts['exact']}/{len(statuses)} tiles match",
-        "ai": f"Signed by an AI_GENERATOR credential; {counts['exact']}/{len(statuses)} tiles match",
-        "edited": f"{counts['changed']}/{len(statuses)} tiles changed since signature",
-    }
-    return {
-        "verdict": verdict,
-        "reason": reasons.get(verdict, reasons["edited"]),
-        "found_by": "phash",
-        "entry_id": MOCK_TX,
-        "anchor": {
-            "tx_hash": MOCK_TX, "timestamp": 1795000000,
-            "explorer_url": f"https://testnet.xrpl.org/transactions/{MOCK_TX}", "signer": MOCK_PUB,
-        },
-        "credential": credential,
-        "signature_ok": True,
-        "tiles": {
-            "verdict": "edited" if verdict == "edited" else "intact",
-            "grid": grid, "counts": counts, "statuses": statuses,
-            "distances": [dist[s] for s in statuses],
-        },
-        "heatmap_png_b64": _mock_heatmap(statuses, cols, rows) if verdict == "edited" else None,
-    }
-
-
-def _mock_heatmap(statuses: list[str], cols: int, rows: int) -> str:
-    colors = {"exact": (0, 0, 0, 0), "robust": (250, 200, 0, 90), "changed": (232, 89, 12, 180), "redacted": (0, 0, 0, 255)}
-    img = Image.new("RGBA", (cols, rows))
-    img.putdata([colors[s] for s in statuses])
-    buf = io.BytesIO()
-    img.resize((cols * 32, rows * 32), Image.Resampling.NEAREST).save(buf, "PNG")
-    return base64.b64encode(buf.getvalue()).decode()
+        new_id, _png = await run_in_threadpool(pipeline.redact_image, rgb, entry_id, parsed, app.state.store)
+    except KeyError as e:
+        raise HTTPException(404, "unknown entry") from e
+    return {"entry_id": new_id, "image_url": f"/api/files/{new_id}.png"}

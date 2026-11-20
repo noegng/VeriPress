@@ -21,7 +21,12 @@
   h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; }
   h1 span { color: var(--accent); }
   .tag { color: var(--muted); font-size: 14px; }
-  .mock { display: none; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #fff3bf; color: #7a5b00; }
+  ol.history { list-style: none; padding: 0; margin: 8px 0 0; border-left: 2px solid var(--line); }
+  ol.history li { position: relative; padding: 4px 0 8px 16px; font-size: 14px; }
+  ol.history li::before { content: ""; position: absolute; left: -6px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  ol.history li.bad::before { background: #c92a2a; }
+  details.more { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  details.more input { width: 100%; margin-top: 8px; }
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--line); padding: 4px; border-radius: 12px; margin-bottom: 16px; }
   .tabs button { border: 0; padding: 12px; border-radius: 9px; font: inherit; font-weight: 600; background: transparent; color: var(--muted); cursor: pointer; }
   .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
@@ -80,7 +85,6 @@
   <header>
     <h1>Tile<span>Proof</span></h1>
     <span class="tag">Image provenance anchored on XRPL</span>
-    <span class="mock" id="mockTag">mock data</span>
   </header>
 
   <div class="tabs" role="tablist">
@@ -102,6 +106,10 @@
         </div>
         <button class="btn" id="signBtn" disabled>Sign &amp; anchor</button>
       </div>
+      <details class="more">
+        <summary>This image is an edit of a signed image</summary>
+        <input type="text" id="parentInput" placeholder="tx hash of the original (version chain)" autocomplete="off" spellcheck="false">
+      </details>
       <div class="err" id="signErr"></div>
     </div>
     <div class="card" id="signResult" hidden>
@@ -148,9 +156,13 @@
         <h3 class="sub">Merkle tree <small id="treeHint">— tap a tile or a node</small></h3>
         <div class="treeaxis">⛓️ root — anchored on XRPL</div>
         <svg id="tree" preserveAspectRatio="none" role="img" aria-label="Merkle tree of the image tiles"></svg>
-        <div class="treeaxis">▦ leaves — one per 32×32 tile</div>
+        <div class="treeaxis" id="treeLeaves">▦ leaves — one per tile</div>
       </div>
       <dl id="verifyInfo"></dl>
+      <div id="historyBox" hidden>
+        <h3 class="sub">Version history</h3>
+        <ol class="history" id="history"></ol>
+      </div>
       <div class="row" id="redactCtl" hidden>
         <button class="btn ghost" id="redactStart">✏️ Redact areas</button>
       </div>
@@ -175,7 +187,6 @@ const VERDICTS = {
   ai:      { dot: "🔵", title: "AI-generated", cls: "v-ai" },
   unknown: { dot: "⚪", title: "Unknown",      cls: "v-unknown" },
 };
-const mockVerdict = new URLSearchParams(location.search).get("mock");
 
 // Tabs
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
@@ -211,7 +222,6 @@ async function post(url, form, btn, errEl) {
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Working…'; errEl.textContent = "";
   try {
     const r = await fetch(url, { method: "POST", body: form });
-    $("mockTag").style.display = r.headers.get("X-Tileproof-Mock") ? "inline-block" : "none";
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
     return body;
@@ -225,6 +235,8 @@ $("signBtn").addEventListener("click", async () => {
   const fd = new FormData();
   fd.append("image", signFile);
   fd.append("signer", document.querySelector("input[name=signer]:checked").value);
+  const parent = $("parentInput").value.trim();
+  if (parent) fd.append("parent", parent);
   const res = await post("/api/sign", fd, $("signBtn"), $("signErr"));
   if (!res) return;
   $("signWhen").textContent = `Tx ${short(res.tx_hash)} validated on XRPL Testnet`;
@@ -255,8 +267,7 @@ $("verifyBtn").addEventListener("click", async () => {
   fd.append("image", verifyFile);
   const tx = $("txInput").value.trim();
   if (tx) fd.append("entry_id", tx);
-  const url = "/api/verify" + (mockVerdict ? `?mock=${encodeURIComponent(mockVerdict)}` : "");
-  const res = await post(url, fd, $("verifyBtn"), $("verifyErr"));
+  const res = await post("/api/verify", fd, $("verifyBtn"), $("verifyErr"));
   if (res) showReport(res);
 });
 
@@ -285,8 +296,14 @@ function showReport(r) {
     ["Anchored", a && esc(new Date(a.timestamp * 1000).toLocaleString())],
     ["Transaction", a && `<a href="${esc(safeUrl(a.explorer_url))}" target="_blank" rel="noopener"><code>${esc(short(a.tx_hash))}</code> ↗</a>`],
     ["Signer key", a && `<code>${esc(short(a.signer))}</code>`],
-    ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows}`)],
+    ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
   ]);
+  const OPS = { capture: "📷 Captured", edit: "✏️ Signed edit", ai_generate: "🤖 AI-generated" };
+  const hist = r.history || [];
+  $("historyBox").hidden = hist.length < 2;
+  $("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op)} · ${esc(new Date(h.timestamp * 1000).toLocaleString())}
+    · <a href="${esc(safeUrl("https://testnet.xrpl.org/transactions/" + h.tx_hash))}" target="_blank" rel="noopener"><code>${esc(short(h.tx_hash))}</code> ↗</a>${h.verified ? "" : " · ❌ not verified"}</li>`).join("");
+  if (r.tiles) $("treeLeaves").textContent = `▦ leaves — ${r.tiles.grid.cols * r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}×${r.tiles.grid.tile} px`;
   buildTree(r.tiles);
   lastEntry = r.verdict !== "unknown" ? r.entry_id : null;
   stopRedact();
@@ -429,7 +446,7 @@ $("redactApply").addEventListener("click", async () => {
   dl.href = safeUrl(res.image_url); dl.hidden = false;
   // Re-verify the redacted image: redacted tiles should come back black but authenticated.
   const blob = await fetch(res.image_url).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
-  if (!blob) { $("redactErr").textContent = "Redacted entry created; image not available yet (mock mode)."; return; }
+  if (!blob) { $("redactErr").textContent = "Redacted entry created, but its image could not be downloaded."; return; }
   verifyFile = new File([blob], "redacted.png", { type: "image/png" });
   img.src = URL.createObjectURL(blob);
   $("txInput").value = res.entry_id;
