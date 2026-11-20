@@ -9,7 +9,7 @@ from xrpl.constants import CryptoAlgorithm
 from xrpl.wallet import Wallet
 
 from tileproof.ledger import CredentialType, FakeLedger
-from tileproof.pipeline import FinalVerdict, redact_image, sign_image, verify_image
+from tileproof.pipeline import FinalVerdict, redact_image, sign_image, verify_image, verify_stored
 from tileproof.store import Store
 
 
@@ -310,3 +310,51 @@ def test_redaction_reason_does_not_claim_the_owner_did_it(photo, ledger, store):
     rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(64, 64, 160, 128)], store)
     report, _ = verify_image(png_to_rgb(red_png), ledger, store, entry_id=rid)
     assert "redacted" in report.reason.lower() and "owner" not in report.reason.lower()
+
+
+def test_device_revoked_after_anchoring_stays_real_and_says_since_when(photo, ledger, store, keys):
+    """Non-retroactive revocation (decisions.md Q5)."""
+    signed, png = sign_image(photo, "device", ledger, store)
+    revoked = ledger.fetch_anchor(signed.entry_id).timestamp + 60
+    ledger.revoke(keys["device"], at=revoked)
+    report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
+    assert report.verdict == FinalVerdict.REAL
+    assert report.credential_revoked_at == revoked
+    assert report.to_json()["credential_revoked_at"] == revoked
+    assert "revoked" in report.reason.lower()
+
+
+def test_device_revoked_before_anchoring_is_unknown(photo, ledger, store, keys):
+    ledger.revoke(keys["device"], at=0)
+    signed, png = sign_image(photo, "device", ledger, store)
+    report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
+    assert report.verdict == FinalVerdict.UNKNOWN
+
+
+def test_verify_stored_checks_the_published_image_of_an_entry(photo, ledger, store):
+    """Public link /v/<tx> (decisions.md Q24): no upload, the stored published image is verified."""
+    signed, _ = sign_image(photo, "device", ledger, store)
+    report, heatmap = verify_stored(signed.entry_id, ledger, store)
+    assert report.verdict == FinalVerdict.REAL and report.entry_id == signed.entry_id
+    assert report.found_by == "tx_hash" and heatmap is not None
+    rid, _ = redact_image(png_to_rgb(store.image_path(signed.entry_id).read_bytes()), signed.entry_id,
+                          [(0, 0, 64, 64)], store)
+    assert verify_stored(rid, ledger, store)[0].tiles.counts()["redacted"] == 4
+
+
+def test_verify_stored_of_an_unknown_entry_raises_key_error(ledger, store):
+    with pytest.raises(KeyError):
+        verify_stored("AB" * 32, ledger, store)
+
+
+def test_fast_anchoring_gives_a_pending_verdict_until_validated(photo, ledger, store):
+    """Fast anchoring (decisions.md Q11): sign returns on submit, the verdict is flagged pending."""
+    signed, png = sign_image(photo, "device", ledger, store, wait=False)
+    assert ledger.fetch_anchor(signed.entry_id).validated is False
+    report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
+    assert report.pending and report.to_json()["pending"] is True
+    assert report.reason.startswith("Anchor pending validation")
+    assert report.verdict == FinalVerdict.REAL  # provisional
+    ledger.validate(signed.entry_id)
+    report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
+    assert not report.pending and not report.reason.startswith("Anchor pending")

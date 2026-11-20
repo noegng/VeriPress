@@ -131,12 +131,18 @@ class FakeLedger:
 
     def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
         h = self._tx_hash(digest, signature)
-        return self._store(Anchor(h, digest, signature, pubkey, int(time.time()), f"fake://tx/{h}"))
+        return self._store(Anchor(h, digest, signature, pubkey, int(time.time()), f"fake://tx/{h}", validated=wait))
 
     def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
         h = self._tx_hash(digest, bundle_hash)
-        return self._store(Anchor(h, digest, "", "", int(time.time()), f"fake://tx/{h}", anonymous=True,
-                                  registry_root=registry_root, bundle_hash=bundle_hash))
+        return self._store(Anchor(h, digest, "", "", int(time.time()), f"fake://tx/{h}", validated=wait,
+                                  anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash))
+
+    def validate(self, tx_hash: str) -> None:
+        """Tests: the submitted tx makes it into a validated ledger."""
+        from dataclasses import replace
+
+        self.anchors[tx_hash] = replace(self.anchors[tx_hash], validated=True)
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         return self.anchors.get(tx_hash)
