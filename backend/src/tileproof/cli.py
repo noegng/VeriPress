@@ -20,7 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 from .commitment import Disclosure, Manifest, commit, heatmap, redact, verify
-from .tiling import DEFAULT_TILE, load_rgb
+from .tiling import load_rgb
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -42,7 +42,7 @@ def cmd_commit(a: argparse.Namespace) -> int:
     manifest, disclosure = commit(load_rgb(a.image), seed, a.tile)
     _write_json(out / "manifest.json", manifest.__dict__)
     _write_json(out / "disclosure.json", disclosure.to_dict())
-    print(f"tiles        {manifest.grid.count} ({manifest.grid.cols}x{manifest.grid.rows} of {a.tile}px)")
+    print(f"tiles        {manifest.grid.count} ({manifest.grid.cols}x{manifest.grid.rows} of {manifest.tile}px)")
     print(f"exact_root   {manifest.exact_root}")
     print(f"robust_root  {manifest.robust_root}")
     print(f"manifest     {manifest.digest()}  <- sign & anchor this")
@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("commit", help="build tile Merkle trees for an image")
     c.add_argument("image")
     c.add_argument("-o", "--out", required=True)
-    c.add_argument("--tile", type=int, default=DEFAULT_TILE)
+    c.add_argument("--tile", type=int, default=None, help="default: ~long side / 40")
     c.set_defaults(fn=cmd_commit)
 
     v = sub.add_parser("verify", help="verify an image against a manifest + disclosure")

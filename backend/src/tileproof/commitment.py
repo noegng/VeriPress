@@ -21,7 +21,7 @@ from PIL import Image
 
 from . import features as F
 from .merkle import MerkleTree, leaf_hash, sha256
-from .tiling import DEFAULT_TILE, Grid, grid_for, resize_to, tile_pixels
+from .tiling import Grid, auto_tile, grid_for, resize_to, tile_pixels
 
 EXACT_DOMAIN = b"TPX1"
 ROBUST_DOMAIN = b"TPR1"
@@ -112,7 +112,8 @@ def _robust_leaf(vec, i: int, salt: bytes) -> bytes:
 # ---------------------------------------------------------------- commit / redact
 
 
-def commit(rgb: np.ndarray, seed: bytes, tile: int = DEFAULT_TILE) -> tuple[Manifest, Disclosure]:
+def commit(rgb: np.ndarray, seed: bytes, tile: int | None = None) -> tuple[Manifest, Disclosure]:
+    tile = tile or auto_tile(rgb.shape[1], rgb.shape[0])
     grid = grid_for(rgb, tile)
     feats = F.quantized_features(rgb, grid)
     salts = [tile_salt(seed, i) for i in range(grid.count)]

@@ -95,3 +95,26 @@ def test_jpeg_of_redacted_image_keeps_tiles_redacted(photo):
     out, d2 = redact(photo, m, d, {0, 1, 21})
     res = verify(jpeg(out, 60), m, d2)
     assert [i for i, s in enumerate(res.statuses) if s == TileStatus.REDACTED] == [0, 1, 21]
+
+
+def test_odd_sized_photo_survives_strong_downscale_without_false_edits():
+    """Calibration finding: edge tiles (slivers, padding) flagged after a WhatsApp-like 2.4x downscale."""
+    from conftest import photo_like
+
+    img = photo_like(1601, 1069, seed=2)  # 1601 % 32 == 1 -> 1 px sliver column; 1069 % 32 == 13
+    m, d = commit(img, SEED)
+    res = verify(jpeg(rescale(img, 0.41), 65), m, d)
+    assert TileStatus.CHANGED not in res.statuses
+    assert res.verdict == Verdict.RECOMPRESSED
+
+
+def test_tile_size_adapts_to_photo_size_so_shared_copies_verify():
+    """Calibrated on real 4K photos: a tile must keep ~40 px after a 1280-1600 px share."""
+    from conftest import photo_like
+
+    big = photo_like(3840, 2560, seed=4)
+    m, d = commit(big, SEED)  # no tile given: chosen from the image size
+    assert m.tile == 96
+    res = verify(jpeg(rescale(big, 1280 / 3840), 55), m, d)
+    assert TileStatus.CHANGED not in res.statuses
+    assert commit(photo_like(), SEED)[0].tile == 32  # small images keep the 32 px floor
