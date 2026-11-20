@@ -283,3 +283,27 @@ def test_unwatermarked_original_of_a_signed_photo_is_real(photo, ledger, store):
         report, _ = verify_image(received, ledger, store, entry_id=signed.entry_id)
         assert report.verdict == FinalVerdict.REAL, report.reason
         assert "original" in report.reason.lower()
+
+
+def test_signing_an_edit_of_an_unknown_parent_is_refused(photo, ledger, store):
+    with pytest.raises(ValueError, match="parent"):
+        sign_image(photo, "device", ledger, store, parent="AB" * 32)
+
+
+def test_signed_edit_whose_parent_cannot_be_verified_says_so(photo, ledger, store):
+    original, png = sign_image(photo, "device", ledger, store)
+    edited = png_to_rgb(png).copy()
+    edited[0:64, 0:64] = 0
+    version, vpng = sign_image(edited, "device", ledger, store, parent=original.entry_id)
+    del ledger.anchors[original.entry_id]  # parent anchor no longer readable
+    report, _ = verify_image(png_to_rgb(vpng), ledger, store, entry_id=version.entry_id)
+    assert report.verdict == FinalVerdict.EDITED
+    assert "could not be verified" in report.reason.lower()
+    assert report.history[-1]["verified"] is False
+
+
+def test_redaction_reason_does_not_claim_the_owner_did_it(photo, ledger, store):
+    signed, png = sign_image(photo, "device", ledger, store)
+    rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(64, 64, 160, 128)], store)
+    report, _ = verify_image(png_to_rgb(red_png), ledger, store, entry_id=rid)
+    assert "redacted" in report.reason.lower() and "owner" not in report.reason.lower()

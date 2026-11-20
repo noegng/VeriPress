@@ -34,6 +34,15 @@ Le reste est conforme : propriété des fichiers, routes et JSON de `interfaces.
 
 À noter, aucune action demandée : Dev A corrige un faux 🟠 quand on vérifie l'**original non tatoué** d'une photo signée (l'écart dû au filigrane dépasse la tolérance dans certaines tuiles). Le contrat ne change pas.
 
+## Retours de la revue de code (20/11, nuit)
+
+Les points 1 à 3 ci-dessus sont confirmés corrigés (merci !). Nouveaux points :
+
+4. **Piège pour l'étape 3 de la démo** (prioritaire) : après une signature, `txInput` est pré-rempli avec le tx_hash (l. ~270). La vérification suivante passe donc par `found_by = tx_hash` au lieu du filigrane, ce qui casse le message « retrouvée malgré WhatsApp ». Ne pas pré-remplir, ou vider le champ quand on change d'image.
+5. **`/api/sign` avec un `parent` inconnu** : `pipeline.sign_image` lève maintenant `ValueError("unknown parent …")`. À transformer en 422, sinon l'API répond 500.
+6. **Historique** : une entrée non vérifiée a `timestamp: null`, ce qui s'affiche « 01/01/1970 ». Afficher « — » à la place (l. ~321).
+7. **Libellés** : « Signed and anchored on XRPL Testnet » (l. ~99) et les liens de l'historique restent figés sur Testnet, même avec le ledger factice. Mineur.
+
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **Ven. soir — marche :** `setup_testnet.py` (comptes + Credentials + `--revoke`/`--reissue`, testé sur Testnet), `XrplLedger` (test de fumée OK), `api.py` (toutes les routes, réponses simulées tant que `pipeline.py` lève `NotImplementedError`, en-tête `X-Tileproof-Mock`), `static/index.html` (Signer/Vérifier, heatmap, vérifié à 390 px).

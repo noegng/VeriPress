@@ -1,6 +1,6 @@
 # Interfaces (contrat Dev A ↔ Dev B)
 
-Toute modification de ce fichier, de `ledger.py`, `store.py` ou des signatures de `pipeline.py` passe par **un commit dédié sur `main`, annoncé à l'autre dev**.
+Toute modification de ce fichier, de `ledger.py`, `store.py` ou des signatures de `pipeline.py` passe par **un commit dédié (dans une PR vers `main`), annoncé à l'autre dev**.
 
 ## Python
 

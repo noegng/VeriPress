@@ -1,14 +1,22 @@
 """Sign / verify pipeline — OWNER: Dev A.  The signatures and JSON shapes below are the
 contract with Dev B's API (see docs/interfaces.md): change only via a dedicated commit on main.
 
-Final verdict rules (implemented test-first by Dev A):
-  no entry found (no tx_hash, no watermark, no phash match)        -> UNKNOWN
-  anchor missing on ledger / digest mismatch / bad signature       -> UNKNOWN (reason says why)
-  disclosure does not match the signed roots                       -> UNKNOWN
-  tiles: EDITED                                                    -> EDITED (heatmap)
-  tiles: INTACT|RECOMPRESSED + credential CAPTURE_DEVICE           -> REAL
-  tiles: INTACT|RECOMPRESSED + credential AI_GENERATOR             -> AI
-  tiles: INTACT|RECOMPRESSED + no valid credential (or revoked)    -> UNKNOWN
+Final verdict rules, first match wins (implemented test-first, tests/test_pipeline.py):
+  no entry found (no id, no watermark, no phash match)              -> UNKNOWN
+  anchor missing on the ledger                                      -> UNKNOWN
+  stored manifest != anchored digest/signer                         -> UNKNOWN
+  bad signature                                                     -> UNKNOWN
+  disclosure does not match the signed roots                        -> UNKNOWN
+  found by watermark and > half of the tiles changed                -> UNKNOWN (copied watermark)
+  tiles: EDITED (a redacted tile that is not black counts as changed) -> EDITED (heatmap)
+  > MAX_REDACTED_SHARE of the tiles redacted                        -> UNKNOWN (proves too little)
+  op == "edit" + any valid credential                               -> EDITED (signed edit; the
+                                                                       reason flags an unverifiable chain)
+  credential AI_GENERATOR                                           -> AI
+  credential CAPTURE_DEVICE                                         -> REAL
+  no valid credential (never issued or revoked, even after signing) -> UNKNOWN
+A tile matches if it is close to the published (watermarked) image OR to the unwatermarked
+original: both are committed at signing. sign_image refuses a `parent` that is not anchored.
 """
 
 from __future__ import annotations
@@ -116,6 +124,8 @@ def sign_image(
 ) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
     `parent`: tx hash of the signed version this image was edited from (version chain)."""
+    if parent is not None and (store.get(parent) is None or ledger.fetch_anchor(parent) is None):
+        raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
     key = load_key(signer)
     wm_id, original = b"", None
     if watermark.enabled():
@@ -185,6 +195,9 @@ def verify_image(
     elif manifest.op == "edit" and credential is not None:
         verdict = FinalVerdict.EDITED
         reason = f"Signed edit of {manifest.parent} by a {credential.value} credential"
+        history = _history(entry.tx_hash, ledger, store)
+        if not all(h["verified"] for h in history):
+            reason += "; the original version could not be verified"
     elif credential in (CredentialType.AI_GENERATOR, CredentialType.CAPTURE_DEVICE):
         verdict = FinalVerdict.AI if credential == CredentialType.AI_GENERATOR else FinalVerdict.REAL
         c, n = tiles.counts(), len(tiles.statuses)
@@ -196,7 +209,7 @@ def verify_image(
             how = "match after recompression"
         reason = f"Signed by a {credential.value} credential; {n - c['redacted']}/{n} tiles {how}"
         if c["redacted"]:
-            reason += f", {c['redacted']} redacted by the owner"
+            reason += f", {c['redacted']} redacted"
     else:
         verdict = FinalVerdict.UNKNOWN
         reason = "Signer has no valid credential (never issued or revoked)"

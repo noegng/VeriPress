@@ -25,7 +25,8 @@ Un agent **ne modifie que les fichiers de son dev**. S'il a besoin d'un changeme
 ## 3. Git
 
 - Branches courtes : `dev-a/<sujet>`, `dev-b/<sujet>`. Jamais de `push --force` sur `main`.
-- **Dépendances** : uniquement sur `main`, dans un commit à part (`uv add …` puis commit de `pyproject.toml` + `uv.lock`), pour éviter les conflits de lockfile. Déjà ajoutées : fastapi, uvicorn, python-multipart, xrpl-py, cryptography. TrustMark sera ajouté par Dev A le moment venu.
+- **Fusion dans `main` par PR GitHub** (depuis le 20/11 au soir), y compris les changements de contrat partagé : un commit dédié dans la PR, annoncé dans sa description.
+- **Dépendances** : dans un commit à part (sur `main` ou dans sa propre PR) (`uv add …` puis commit de `pyproject.toml` + `uv.lock`), pour éviter les conflits de lockfile. Déjà ajoutées : fastapi, uvicorn, python-multipart, xrpl-py, cryptography. TrustMark sera ajouté par Dev A le moment venu.
 - **Points de synchro** (fusion dans `main`, chacun fait un rebase sur `main` avant) : **~23:00, ~03:00, 08:00, 10:00 (gel)**. Entre deux synchros, on peut fusionner plus souvent si c'est vert.
 - Avant de fusionner : `cd backend && uv run python -m pytest` doit passer.
 - Jamais de commit de `backend/keys/`, `backend/store/`, de seeds ou de `.env`.
