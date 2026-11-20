@@ -165,6 +165,7 @@ class FakeLedger:
 
 
 MEMO_TYPE = "tileproof/v1"
+REGISTRY_ROOT_MEMO_TYPE = "tileproof/registry-root/v1"
 LSF_ACCEPTED = 0x00010000
 DEFAULT_NODE = "https://s.altnet.rippletest.net:51234"
 EXPLORER = "https://testnet.xrpl.org/transactions/"
@@ -222,30 +223,39 @@ class XrplLedger:
         self._history_cache[address] = (time.monotonic(), entries)
         return entries
 
-    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
-        # wait=False (fast anchoring) lands with phase 2 task 5; until then it still waits,
-        # which is correct, only slower (validated=True).
+    def _submit_anchor(self, data: dict, wait: bool = True) -> tuple[str, int]:
+        """Payment of 1 drop anchoring service -> registry carrying one tileproof/v1 memo.
+        Returns (tx hash, ledger close time). wait=False (fast anchoring) lands with phase 2
+        task 5; until then it still waits, which is correct, only slower."""
         from xrpl.models.transactions import Memo, Payment
         from xrpl.transaction import submit_and_wait
         from xrpl.utils import str_to_hex
 
-        data = json.dumps({"d": digest, "s": signature, "k": pubkey}, separators=(",", ":"))
         tx = Payment(
             account=self.wallet.address,
             destination=self.registry,
             amount="1",
-            memos=[Memo(memo_type=str_to_hex(MEMO_TYPE), memo_data=str_to_hex(data))],
+            memos=[Memo(memo_type=str_to_hex(MEMO_TYPE), memo_data=str_to_hex(_compact(data)))],
         )
         resp = submit_and_wait(tx, self.client, self.wallet)
         code = resp.result.get("meta", {}).get("TransactionResult")
         if code != "tesSUCCESS":
             raise RuntimeError(f"anchor tx failed: {code}")
-        tx_hash = resp.result["hash"]
-        return Anchor(tx_hash, digest, signature, pubkey, _close_time(resp.result), EXPLORER + tx_hash)
+        return resp.result["hash"], _close_time(resp.result)
+
+    def anchor(self, digest: str, signature: str, pubkey: str, wait: bool = True) -> Anchor:
+        tx_hash, ts = self._submit_anchor({"d": digest, "s": signature, "k": pubkey}, wait)
+        return Anchor(tx_hash, digest, signature, pubkey, ts, EXPLORER + tx_hash)
+
+    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
+        """No device key nor signature on chain: the ZK proof (kept off-chain, its sha256 in
+        "h") shows that SOME device of the registry root "r" signed the digest."""
+        tx_hash, ts = self._submit_anchor({"d": digest, "a": 1, "r": registry_root, "h": bundle_hash}, wait)
+        return Anchor(tx_hash, digest, "", "", ts, EXPLORER + tx_hash,
+                      anonymous=True, registry_root=registry_root, bundle_hash=bundle_hash)
 
     def fetch_anchor(self, tx_hash: str) -> Anchor | None:
         from xrpl.models.requests import Tx
-        from xrpl.utils import hex_to_str
 
         resp = self._request(Tx(transaction=tx_hash))
         if not resp.is_successful() or not resp.result.get("validated"):
@@ -258,17 +268,30 @@ class XrplLedger:
             or r.get("meta", {}).get("TransactionResult") != "tesSUCCESS"
         ):
             return None
-        for m in tx.get("Memos", []):
-            memo = m.get("Memo", {})
-            try:
-                if hex_to_str(memo.get("MemoType", "")) != MEMO_TYPE:
-                    continue
-                data = json.loads(hex_to_str(memo["MemoData"]))
-                hash_ = r.get("hash", tx_hash).upper()
-                return Anchor(hash_, data["d"], data["s"], data["k"], _close_time(r), EXPLORER + hash_)
-            except (KeyError, ValueError, UnicodeDecodeError):
+        data = _memo_json(tx, MEMO_TYPE)
+        hash_ = r.get("hash", tx_hash).upper()
+        return _anchor_from_memo(data, hash_, _close_time(r)) if data is not None else None
+
+    def registry_root_at(self, at_time: int) -> str | None:
+        """Last root the registry published (AccountSet + tileproof/registry-root/v1 memo)
+        at or before `at_time`: a proof is accepted only against the root in force when the
+        photo was anchored, so revoking a device (new root without it) is not retroactive."""
+        root = None
+        for e in self._history(self.registry):  # oldest first
+            tx = e.get("tx_json") or e.get("tx") or {}
+            if (
+                not e.get("validated", False)
+                or e.get("meta", {}).get("TransactionResult") != "tesSUCCESS"
+                or tx.get("Account") != self.registry
+            ):
                 continue
-        return None
+            data = _memo_json(tx, REGISTRY_ROOT_MEMO_TYPE)
+            if not data or "root" not in data:
+                continue
+            if _close_time(e) > at_time:
+                break
+            root = str(data["root"])
+        return root
 
     def credential_type(self, pubkey: str, at_time: int | None = None) -> CredentialType | None:
         from xrpl.core.keypairs import derive_classic_address
@@ -324,16 +347,47 @@ class XrplLedger:
             return None
         return _revoked_at(self._intervals(subject).values(), int(time.time()))
 
-    # --- Phase 2: implemented by the Dev B feature PRs (tasks 1, 6 in tasks-dev-b.md) ---
-
-    def anchor_anonymous(self, digest: str, registry_root: str, bundle_hash: str, wait: bool = True) -> Anchor:
-        raise NotImplementedError("phase 2 task 1 (anonymous registry)")
+    # --- Phase 2: implemented by a later Dev B feature PR (task 6 in tasks-dev-b.md) ---
 
     def credential_passkey(self, pubkey: str) -> str | None:
         raise NotImplementedError("phase 2 task 6 (passkey)")
 
-    def registry_root_at(self, at_time: int) -> str | None:
-        raise NotImplementedError("phase 2 task 1 (anonymous registry)")
+
+def _compact(data: dict) -> str:
+    return json.dumps(data, separators=(",", ":"))
+
+
+def _memo_json(tx: dict, memo_type: str) -> dict | None:
+    """JSON payload of the first memo of `memo_type` in a tx, or None."""
+    from xrpl.utils import hex_to_str
+
+    for m in tx.get("Memos", []):
+        memo = m.get("Memo", {})
+        try:
+            if hex_to_str(memo.get("MemoType", "")) != memo_type:
+                continue
+            data = json.loads(hex_to_str(memo["MemoData"]))
+        except (KeyError, ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _anchor_from_memo(data: dict, tx_hash: str, timestamp: int) -> Anchor | None:
+    """The three tileproof/v1 memo shapes (docs/interfaces.md):
+    named {"d","s","k"} · anonymous {"d","a":1,"r","h"} · passkey {"d","k","w"}."""
+    url = EXPLORER + tx_hash
+    try:
+        digest = str(data["d"])
+        if data.get("a") == 1:
+            return Anchor(tx_hash, digest, "", "", timestamp, url, anonymous=True,
+                          registry_root=str(data["r"]), bundle_hash=str(data["h"]))
+        if "w" in data:
+            return Anchor(tx_hash, digest, "", str(data["k"]), timestamp, url, bundle_hash=str(data["w"]))
+        return Anchor(tx_hash, digest, str(data["s"]), str(data["k"]), timestamp, url)
+    except KeyError:
+        return None
 
 
 HISTORY_TTL = 3.0  # seconds
