@@ -191,7 +191,7 @@ def _prepare(
     manifest.signer = "" if anonymous else signer_pubkey
     manifest.anonymous = anonymous
     manifest.passkey = passkey
-    manifest.op = op if op == "ai_generate" else ("edit" if parent else "capture")
+    manifest.op = op if op in ("ai_generate", "develop") else ("edit" if parent else "capture")
     manifest.parent = parent
     manifest.t0 = _latest_ledger(ledger)
     capture = metadata.read_capture(exif)
@@ -222,18 +222,28 @@ def _publish(prep: _Prepared, anchor: Anchor, store: Store, bundle: dict | None 
 
 def sign_image(
     rgb: np.ndarray, signer: Signer, ledger: Ledger, store: Store, parent: str | None = None,
-    anonymous: bool = False, wait: bool = True, exif: bytes | None = None,
+    anonymous: bool = False, wait: bool = True, exif: bytes | None = None, op: str | None = None,
 ) -> tuple[SignResult, bytes]:
     """Commit, sign, anchor, store. Returns the result and the PNG to publish.
     `parent`: tx hash of the signed version this image was edited from (version chain).
     `anonymous`: prove membership of the device registry in zero knowledge instead of
     publishing the device key and signature (decisions.md Q2-Q4).
     `exif`: raw EXIF of the uploaded file; with a capture time + GPS, the manifest commits to
-    them and day / ~10 km area claims are proven in zero knowledge (decisions.md Q16-Q17)."""
+    them and day / ~10 km area claims are proven in zero knowledge (decisions.md Q16-Q17).
+    `op="develop"`: this image is the device's own development of its signed RAW `parent`
+    (digital negative -> reference JPEG): same device key required."""
+    if op not in (None, "develop"):
+        raise ValueError(f"unsupported op {op!r}")
     if anonymous:
         bjj, pks, index = _anonymous_registry(signer)
     key = load_key(signer)
-    prep = _prepare(rgb, "ai_generate" if signer == "ai" else "capture", key.public_key, ledger, store,
+    if op == "develop":
+        neg = store.get(parent) if parent else None
+        if neg is None:
+            raise ValueError("develop needs the parent: the signed RAW (digital negative) it was developed from")
+        if anonymous or neg.manifest.anonymous or neg.manifest.signer != key.public_key:
+            raise ValueError("develop must be signed by the same device that signed the RAW negative")
+    prep = _prepare(rgb, op or ("ai_generate" if signer == "ai" else "capture"), key.public_key, ledger, store,
                     parent=parent, exif=exif, anonymous=anonymous)
     digest = prep.manifest.digest()
     bundle = None
@@ -451,6 +461,20 @@ def verify_image(
     elif tiles.counts()["redacted"] > len(tiles.statuses) * MAX_REDACTED_SHARE:
         verdict = FinalVerdict.UNKNOWN
         reason = "Too much of the image is redacted to vouch for its content"
+    elif manifest.op == "develop" and credential is not None:
+        history = _history(entry.tx_hash, ledger, store)
+        neg = store.get(manifest.parent) if manifest.parent else None
+        chain_ok = (
+            all(h["verified"] for h in history) and len(history) >= 2 and history[1]["op"] == "capture"
+            and neg is not None and neg.manifest.signer == manifest.signer
+        )
+        if chain_ok:
+            verdict = FinalVerdict.AI if credential == CredentialType.AI_GENERATOR else FinalVerdict.REAL
+            reason = (f"Developed from the signed RAW negative {manifest.parent} by the same "
+                      f"{credential.value}; {len(tiles.statuses)} tiles match the published development")
+        else:
+            verdict = FinalVerdict.EDITED
+            reason = f"Signed development of {manifest.parent}; the original version could not be verified"
     elif manifest.op == "edit" and credential is not None:
         verdict = FinalVerdict.EDITED
         reason = f"Signed edit of {manifest.parent} by a {credential.value} credential"
