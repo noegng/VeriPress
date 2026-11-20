@@ -6,7 +6,7 @@
   veripress demo IMAGE [--ai AI_IMAGE] -o OUT_DIR -> the demo scenarios offline (FakeLedger), incl. anonymous signing
   veripress calibrate ORIG_DIR SHARED_DIR -o OUT.json
                                                -> robust-tile / phash margins on real shared copies
-                                                  (same file stem in both dirs, e.g. IMG_1.jpg / IMG_1.jpeg)
+                                                  (copies matched to originals by content: any file names)
 """
 
 from __future__ import annotations
@@ -192,36 +192,59 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
     def images(d: str) -> list[Path]:
         return sorted(p for p in Path(d).iterdir() if p.is_file() and not p.name.startswith("."))
 
-    shared = {p.stem: p for p in images(a.shared)}
+    def load_all(d: str) -> dict[str, tuple]:
+        out = {}
+        for p in images(d):
+            try:
+                rgb = load_rgb(p)
+            except Exception:  # noqa: BLE001 — not an image: ignored
+                continue
+            out[p.name] = (p, rgb, phash(rgb))
+        return out
+
+    # Pair by content, not by name: WhatsApp renames what it exports (and order is easy to mix up).
+    originals, shared = load_all(a.originals), load_all(a.shared)
+    candidates = sorted(
+        ((o[2] ^ c[2]).bit_count(), on, cn)
+        for on, o in originals.items() for cn, c in shared.items()
+    )
+    match: dict[str, str] = {}
+    for dist, on, cn in candidates:
+        if dist <= 10 and on not in match and cn not in match.values():
+            match[on] = cn
+
     pairs: dict[str, dict] = {}
-    missing: list[str] = []
-    for orig in images(a.originals):
-        if orig.stem not in shared:
-            missing.append(orig.stem)
-            continue
-        src, recv = load_rgb(orig), load_rgb(shared[orig.stem])
+    for on in sorted(match):
+        (opath, src, oph), (cpath, recv, cph) = originals[on], shared[match[on]]
         manifest, disclosure = commit(src, os.urandom(32))
         res = verify(recv, manifest, disclosure)
-        pairs[orig.stem] = {
+        pairs[opath.stem] = {
+            "shared": cpath.name,
             "size": [src.shape[1], src.shape[0]],
             "received_size": [recv.shape[1], recv.shape[0]],
             "changed_tiles": sum(s == TileStatus.CHANGED for s in res.statuses),
             "tiles": len(res.statuses),
             "max_tile_distance": round(max(res.distances), 2),
             "p99_tile_distance": round(sorted(res.distances)[int(0.99 * (len(res.distances) - 1))], 2),
-            "phash_distance": (phash(src) ^ phash(recv)).bit_count(),
+            "phash_distance": (oph ^ cph).bit_count(),
         }
-        print(f"{orig.stem:20} changed={pairs[orig.stem]['changed_tiles']:5} "
-              f"max={pairs[orig.stem]['max_tile_distance']:6} phash={pairs[orig.stem]['phash_distance']}")
+        print(f"{opath.stem:20} <- {cpath.name:32} changed={pairs[opath.stem]['changed_tiles']:5} "
+              f"max={pairs[opath.stem]['max_tile_distance']:6} phash={pairs[opath.stem]['phash_distance']}")
+    missing = sorted(originals[on][0].stem for on in originals if on not in match)
+    unmatched = sorted(cn for cn in shared if cn not in match.values())
     report = {
         "tolerance": F.TOLERANCE,
         "pairs": pairs,
         "missing": missing,
-        "all_pass": bool(pairs) and all(p["changed_tiles"] == 0 and p["phash_distance"] <= 10 for p in pairs.values()),
+        "unmatched": unmatched,
+        "all_pass": bool(pairs) and not missing and not unmatched
+        and all(p["changed_tiles"] == 0 for p in pairs.values()),
     }
     _write_json(Path(a.out), report)
     if missing:
         print(f"no shared copy for: {', '.join(missing)}")
+    if unmatched:
+        print(f"shared files matching no original: {', '.join(unmatched)}")
     print(f"all_pass={report['all_pass']} (tolerance {F.TOLERANCE}) -> {a.out}")
     return 0
 

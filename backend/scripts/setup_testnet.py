@@ -9,6 +9,7 @@ and its Poseidon root published on XRPL. Safe to re-run after a Testnet reset.
     uv run python scripts/setup_testnet.py --fresh      # ignore existing keys, new accounts
     uv run python scripts/setup_testnet.py --revoke device   # CredentialDelete + new registry root without it
     uv run python scripts/setup_testnet.py --reissue device  # re-issue + new registry root with it
+    uv run python scripts/setup_testnet.py --passkey         # registry attests keys/passkey.json (Touch ID)
 
 The registry follows the credentials: the real device is in the tree iff its CAPTURE_DEVICE
 credential is accepted, so --revoke / --reissue republish the right root by themselves.
@@ -34,7 +35,7 @@ from xrpl.utils import str_to_hex
 from xrpl.wallet import Wallet, generate_faucet_wallet
 
 from veripress import zk
-from veripress.ledger import REGISTRY_ROOT_MEMO_TYPE, XrplLedger
+from veripress.ledger import REGISTRY_ROOT_MEMO_TYPE, XrplLedger, passkey_uri
 
 NODE_URL = "https://s.altnet.rippletest.net:51234"
 KEYS = Path(__file__).resolve().parent.parent / "keys"
@@ -92,11 +93,24 @@ def submit(client: JsonRpcClient, tx, wallet: Wallet, label: str) -> None:
         sys.exit(f"{label} failed: {code}")
 
 
+def device_passkey_uri(ctype: str) -> str | None:
+    """URI of the device credential: the attested passkey survives --revoke / --reissue."""
+    path = KEYS / "passkey.json"
+    if ctype != SUBJECTS["device"] or not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    return passkey_uri(data["sha256"]) if data.get("attested") else None
+
+
 def issue(client: JsonRpcClient, registry: Wallet, subject: Wallet, ctype: str) -> None:
     state = credential_state(client, subject.address, registry.address, ctype)
     if state == "missing":
-        tx = CredentialCreate(account=registry.address, subject=subject.address, credential_type=str_to_hex(ctype))
-        submit(client, tx, registry, f"CredentialCreate {ctype}")
+        uri = device_passkey_uri(ctype)
+        tx = CredentialCreate(
+            account=registry.address, subject=subject.address, credential_type=str_to_hex(ctype),
+            uri=str_to_hex(uri) if uri else None,
+        )
+        submit(client, tx, registry, f"CredentialCreate {ctype}" + (" (passkey attested)" if uri else ""))
         state = "pending"
     if state == "pending":
         tx = CredentialAccept(account=subject.address, issuer=registry.address, credential_type=str_to_hex(ctype))
@@ -173,15 +187,49 @@ def sync_registry(client: JsonRpcClient, registry: Wallet) -> None:
         publish_registry_root(client, registry, root, len(pks))
 
 
+def attest_passkey(client: JsonRpcClient) -> None:
+    """The registry attests the device's passkey (decisions.md Q21): re-issue the device's
+    CAPTURE_DEVICE credential with URI "passkey:sha256:<hex>". XRPL cannot edit a credential's
+    URI, so it is deleted and re-created; photos anchored before keep verifying (revocation is
+    not retroactive). keys/passkey.json is written by the page (localhost only)."""
+    path = KEYS / "passkey.json"
+    if not path.exists():
+        sys.exit("no keys/passkey.json: register the passkey first (page, on localhost)")
+    data = json.loads(path.read_text())
+    registry = load("registry", CryptoAlgorithm.SECP256K1)
+    device = load("device", CryptoAlgorithm.ED25519)
+    ctype = SUBJECTS["device"]
+    device_pk = json.loads((KEYS / "device.json").read_text())["public_key"]
+    current = XrplLedger(node_url=NODE_URL, keys_dir=KEYS).credential_passkey(device_pk)
+    log(f"Passkey sha256 {data['sha256'][:16]}…")
+    if current == data["sha256"]:
+        log("  already attested in the device credential")
+    else:
+        if credential_state(client, device.address, registry.address, ctype) != "missing":
+            tx = CredentialDelete(account=registry.address, subject=device.address, credential_type=str_to_hex(ctype))
+            submit(client, tx, registry, f"CredentialDelete {ctype} (to re-issue with the passkey)")
+        write_secret(path, {**data, "attested": True})
+        issue(client, registry, device, ctype)
+    write_secret(path, {**data, "attested": True})
+    log("Anonymous registry:")
+    sync_registry(client, registry)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--fresh", action="store_true", help="create new accounts even if keys/ exists")
     p.add_argument("--revoke", choices=SUBJECTS, help="delete the credential of this subject")
     p.add_argument("--reissue", choices=SUBJECTS, help="re-issue the credential of this subject")
+    p.add_argument("--passkey", action="store_true",
+                   help="attest the passkey saved in keys/passkey.json in the device credential URI")
     args = p.parse_args()
 
     KEYS.mkdir(exist_ok=True)
     client = JsonRpcClient(NODE_URL)
+
+    if args.passkey:
+        attest_passkey(client)
+        return
 
     if args.revoke or args.reissue:
         registry = load("registry", CryptoAlgorithm.SECP256K1)

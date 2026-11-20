@@ -143,6 +143,7 @@ class Anchor:              # champs ajoutés, avec valeur par défaut
 class Ledger(Protocol):
     def anchor(self, digest, signature, pubkey, wait: bool = True) -> Anchor: ...
     def anchor_anonymous(self, digest, registry_root, bundle_hash, wait: bool = True) -> Anchor: ...
+    def anchor_passkey(self, digest, pubkey, bundle_hash, wait: bool = True) -> Anchor: ...  # ajouté (Dev B) : memo {d, k, w}, Anchor.signature = ""
     def fetch_anchor(self, tx_hash) -> Anchor | None: ...           # renvoie aussi les tx non validées (validated=False)
     def credential_type(self, pubkey, at_time=None) -> CredentialType | None:
         """at_time OBLIGATOIRE maintenant : Credential valide à cet instant (émis avant, pas encore supprimé)."""

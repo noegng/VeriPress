@@ -122,6 +122,10 @@
       <div class="row">
         <button class="btn" id="signBtn" disabled>Sign &amp; anchor</button>
       </div>
+      <div class="row" id="passkeyRow" hidden>
+        <button class="btn ghost" id="passkeyBtn" hidden disabled>🔑 Sign with passkey (Touch ID)</button>
+        <button class="btn ghost" id="passkeySetup" hidden>🔑 Set up this laptop's passkey (Touch ID)</button>
+      </div>
       <details class="more">
         <summary>This image is an edit of a signed image</summary>
         <input type="text" id="parentInput" placeholder="tx hash of the original (version chain)" autocomplete="off" spellcheck="false">
@@ -287,7 +291,7 @@ function showPreview(img, file) {
   img.src = URL.createObjectURL(file);
 }
 picker("signDrop", "signFile", (f) => {
-  signFile = f; $("signBtn").disabled = false; $("signResult").hidden = true;
+  signFile = f; $("signBtn").disabled = false; $("signResult").hidden = true; syncPasskey();
   showPreview($("signPreview"), f); $("signStage").hidden = false;
 });
 picker("verifyDrop", "verifyFile", (f) => {
@@ -333,7 +337,10 @@ $("signBtn").addEventListener("click", async () => {
   const busy = anon ? (onChainLedger ? "Proving + submitting to XRPL…" : "Proving (~5 s)…")
     : onChainLedger ? "Submitting to XRPL…" : "Signing…";
   const res = await post("/api/sign", fd, $("signBtn"), $("signErr"), busy);
-  if (!res) return;
+  if (res) showSignResult(res);
+});
+
+function showSignResult(res) {
   const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(res.explorer_url || "");
   $("signWhen").textContent = !onChain ? `Tx ${short(res.tx_hash)} — offline demo ledger (not on chain)`
     : res.pending ? `⏳ Tx ${short(res.tx_hash)} submitted — waiting for XRPL validation…`
@@ -344,6 +351,7 @@ $("signBtn").addEventListener("click", async () => {
     ["Public link", publicLink(res.entry_id)],
     ["Entry", `<code>${esc(short(res.entry_id))}</code>`],
     ["Signer key", res.anonymous ? "🕶️ hidden — zero-knowledge proof of an accredited device" : `<code>${esc(short(res.signer))}</code>`],
+    ["Passkey", res.passkey ? "🔑 signed with the device passkey (Touch ID), attested by the registry" : null],
     ["Registry root", res.registry_root && `<code>${esc(short(res.registry_root))}</code>`],
     ["Manifest digest", `<code>${esc(short(res.digest))}</code>`],
     ["Tiles", res.grid && `${res.grid.cols} × ${res.grid.rows} (${res.grid.cols * res.grid.rows} tiles of ${res.grid.tile}px)`],
@@ -356,7 +364,93 @@ $("signBtn").addEventListener("click", async () => {
   // being found by its watermark after WhatsApp, not by a hash we typed in for it.
   $("signResult").hidden = false;
   $("signResult").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Passkey (decisions.md Q21-Q23): WebAuthn P-256 on this laptop (Touch ID), nominative mode only.
+// The challenge is the manifest digest; the server checks the assertion against the passkey the
+// registry attested in the device's Credential URI.
+const b64u = {
+  enc: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+  dec: (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0)),
+};
+const hexBytes = (h) => Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
+let passkey = null; // /api/passkey
+const passkeyCapable = !!(window.PublicKeyCredential && window.isSecureContext);
+
+async function refreshPasskey() {
+  try { passkey = await fetch("/api/passkey").then((r) => r.json()); } catch { passkey = null; }
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+  $("passkeyRow").hidden = !passkeyCapable || !(passkey?.attested || local);
+  $("passkeyBtn").hidden = !passkey?.attested;
+  $("passkeySetup").hidden = !!passkey?.attested || !local;
+  $("passkeySetup").textContent = passkey?.registered
+    ? "🔑 Passkey saved — ask the registry to attest it: setup_testnet.py --passkey"
+    : "🔑 Set up this laptop's passkey (Touch ID)";
+  syncPasskey();
+}
+function syncPasskey() {
+  const ai = document.querySelector("input[name=signer]:checked").value === "ai";
+  $("passkeyBtn").disabled = !signFile || ai || $("anonInput").checked; // passkey = named device signing only
+}
+document.querySelectorAll("input[name=signer]").forEach((r) => r.addEventListener("change", syncPasskey));
+$("anonInput").addEventListener("change", syncPasskey);
+
+$("passkeySetup").addEventListener("click", async () => {
+  if (passkey?.registered) return;
+  $("signErr").textContent = "";
+  try {
+    const cred = await navigator.credentials.create({ publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rp: { name: "VeriPress" },
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "veripress-device", displayName: "VeriPress capture device" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ECDSA P-256
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+      attestation: "none", timeout: 60000,
+    } });
+    const spki = cred.response.getPublicKey && cred.response.getPublicKey();
+    if (!spki) throw new Error("this browser cannot export the passkey public key");
+    const r = await fetch("/api/passkey/register", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential_id: b64u.enc(cred.rawId), public_key: b64u.enc(spki) }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+  } catch (e) { $("signErr").textContent = "⚠ Passkey setup: " + e.message; }
+  refreshPasskey();
 });
+
+$("passkeyBtn").addEventListener("click", async () => {
+  const fd = new FormData();
+  fd.append("image", signFile);
+  const parent = $("parentInput").value.trim();
+  if (parent) fd.append("parent", parent);
+  const prep = await post("/api/sign/passkey/prepare", fd, $("passkeyBtn"), $("signErr"), "Preparing…");
+  if (!prep) return;
+  let assertion;
+  try {
+    const cred = await navigator.credentials.get({ publicKey: {
+      challenge: hexBytes(prep.challenge), // = the manifest digest
+      allowCredentials: [{ type: "public-key", id: b64u.dec(passkey.credential_id) }],
+      userVerification: "required", timeout: 60000,
+    } });
+    assertion = {
+      credential_id: b64u.enc(cred.rawId),
+      authenticator_data: b64u.enc(cred.response.authenticatorData),
+      client_data_json: b64u.enc(cred.response.clientDataJSON),
+      signature: b64u.enc(cred.response.signature),
+      public_key: passkey.public_key,
+    };
+  } catch (e) { $("signErr").textContent = "⚠ Passkey: " + e.message; return; }
+  const btn = $("passkeyBtn"), label = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Anchoring…';
+  try {
+    const r = await fetch("/api/sign/passkey/complete", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prep_id: prep.prep_id, assertion }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    showSignResult(body);
+  } catch (e) { $("signErr").textContent = "⚠ " + e.message; }
+  finally { btn.innerHTML = label; syncPasskey(); }
+});
+refreshPasskey();
 
 // Verify
 function applyHeatmapToggle() {
