@@ -480,4 +480,39 @@ def test_shared_assets_are_a_closed_list(client):
     for bad in ("index.html", "view.html", "..%2Fapi.py", "nope.js"):
         assert client.get(f"/assets/{bad}").status_code == 404
     page = client.get("/").text
-    assert "/assets/proofs.js" in page and "/assets/proofs.css" in page
+    assert "/api/verify" in page and "/api/sign" in page and "/api/proof/" in page
+
+
+def test_proof_material_lets_the_browser_recompute_the_root(client, signed):
+    """/api/proof/<id>: the canonical manifest (hashes to the anchored digest) and the disclosure,
+    from which the robust Merkle root is rebuilt exactly as the page's proof replay does."""
+    import hashlib
+    import struct
+
+    body, _ = signed
+    r = client.get(f"/api/proof/{body['entry_id'].lower()}")
+    assert r.status_code == 200
+    p = r.json()
+    assert hashlib.sha256(p["manifest"].encode()).hexdigest() == body["digest"]
+    leaves = []
+    for t in p["disclosure"]["tiles"]:
+        if "r" in t:
+            leaves.append(bytes.fromhex(t["r"]))
+            continue
+        feats = struct.pack(f">{len(t['f'])}h", *t["f"]) + (struct.pack(f">{len(t['g'])}h", *t["g"]) if "g" in t else b"")
+        leaves.append(hashlib.sha256(b"\x00VPR1" + t["i"].to_bytes(4, "big") + bytes.fromhex(t["salt"]) + feats).digest())
+    while len(leaves) > 1:
+        nxt = [hashlib.sha256(b"\x01" + leaves[i] + leaves[i + 1]).digest() for i in range(0, len(leaves) - 1, 2)]
+        leaves = nxt + ([leaves[-1]] if len(leaves) % 2 else [])
+    assert leaves[0].hex() == body["roots"]["robust"]
+    assert client.get(f"/api/proof/{'0' * 64}").status_code == 404
+    assert client.get("/api/proof/not-hex").status_code == 422
+
+
+def test_demo_specimens_are_a_closed_list(client):
+    listed = client.get("/api/demo").json()
+    assert isinstance(listed, list)
+    for name, _label in listed:
+        assert client.get(f"/api/demo/{name}").status_code == 200
+    for bad in ("..%2F..%2Fkeys%2Fdevice.json", "RUNBOOK.md", "nope.png"):
+        assert client.get(f"/api/demo/{bad}").status_code == 404
