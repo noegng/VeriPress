@@ -37,3 +37,24 @@ def test_anchor_roundtrip_and_credentials():
     assert ledger.credential_type(device) is CredentialType.CAPTURE_DEVICE
     assert ledger.credential_type(ai) is CredentialType.AI_GENERATOR
     assert ledger.credential_type("ED" + "11" * 32) is None
+
+
+def test_non_retroactive_revocation_on_real_history():
+    """The demo device was revoked and re-issued during the tests: every gap in its history
+    must read as 'no credential' at that instant, every interval as CAPTURE_DEVICE."""
+    from xrpl.core.keypairs import derive_classic_address
+
+    ledger = XrplLedger(keys_dir=KEYS)
+    device = json.loads((KEYS / "device.json").read_text())["public_key"]
+    intervals = ledger._intervals(derive_classic_address(device))[CredentialType.CAPTURE_DEVICE]
+    assert intervals, "device has no CAPTURE_DEVICE history: run scripts/setup_testnet.py"
+    for start, end, _ in intervals:
+        assert ledger.credential_type(device, start) is CredentialType.CAPTURE_DEVICE
+        if end is not None:
+            assert ledger.credential_type(device, end - 1) is CredentialType.CAPTURE_DEVICE
+            assert ledger.credential_type(device, end) is None  # revoked from that instant
+    assert ledger.credential_type(device, intervals[0][0] - 1) is None  # before the first accept
+    # current state and history agree
+    now_valid = ledger.credential_type(device) is CredentialType.CAPTURE_DEVICE
+    assert (ledger.credential_revoked_at(device) is None) == now_valid
+    print(f"\n{len(intervals)} validity interval(s):", intervals)
