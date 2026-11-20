@@ -41,6 +41,7 @@ from .commitment import Disclosure, Manifest, Verdict, VerifyResult, commit, hea
 from .perceptual import phash
 from .ledger import Anchor, CredentialType, Ledger
 from . import c2pa_embed, metadata, watermark, zk
+from .batching import resolve_receipt
 from .contentaddr import canonical_json, cid_v1_raw
 from .signing import keys_dir, load_key, verify_signature, verify_webauthn
 from .store import Entry, Store
@@ -107,6 +108,7 @@ class Report:
     pending: bool = False
     time_window: dict | None = None  # {"not_before", "not_after", "ledger_index", "t0_ok"}
     disclosure_cid: str | None = None
+    batch: dict | None = None  # aggregated anchoring: {"tx_hash", "index", "size"}
 
     def to_json(self, heatmap_png: bytes | None = None) -> dict:
         """Shape: docs/interfaces.md "POST /api/verify"."""
@@ -138,6 +140,7 @@ class Report:
             "pending": self.pending,
             "time_window": self.time_window,
             "disclosure_cid": self.disclosure_cid,
+            "batch": self.batch,
             "heatmap_png_b64": base64.b64encode(heatmap_png).decode() if heatmap_png else None,
         }
 
@@ -182,7 +185,8 @@ def _prepare(
     rgb: np.ndarray, op: str, signer_pubkey: str, ledger: Ledger | None, store: Store,
     parent: str | None = None, exif: bytes | None = None, anonymous: bool = False, passkey: str | None = None,
 ) -> _Prepared:
-    if parent is not None and (store.get(parent) is None or (ledger is not None and ledger.fetch_anchor(parent) is None)):
+    if parent is not None and (store.get(parent) is None or (
+            ledger is not None and _fetch_anchor(parent, ledger, store)[0] is None)):
         raise ValueError(f"unknown parent {parent}: not anchored or not in the store")
     wm_id, original = b"", None
     if watermark.enabled():
@@ -406,10 +410,9 @@ def verify_image(
         reason = f"No provenance record for id {entry_id}" if entry_id else "No provenance found for this image"
         return Report(FinalVerdict.UNKNOWN, reason, None, None, None, None, False, None), None
     manifest = entry.manifest
-    anchor = ledger.fetch_anchor(entry.tx_hash)
+    anchor, batch_info, err = _fetch_anchor(entry.tx_hash, ledger, store)
     if anchor is None:
-        reason = f"Anchor transaction {entry.tx_hash} not found on the ledger"
-        return Report(FinalVerdict.UNKNOWN, reason, found_by, entry.id, None, None, False, None), None
+        return Report(FinalVerdict.UNKNOWN, err, found_by, entry.id, None, None, False, None), None
     auth = _authenticate(anchor, manifest, entry.tx_hash, ledger, store)
     sig_ok, credential, zk_check = auth["sig_ok"], auth["credential"], auth["zk"]
     is_passkey, passkey_attested = auth["passkey"], auth["passkey_attested"]
@@ -509,6 +512,7 @@ def verify_image(
         pending=not anchor.validated,
         time_window=_time_window(manifest, anchor, ledger),
         disclosure_cid=manifest.disclosure_cid or None,
+        batch=batch_info,
         passkey=is_passkey,
         # Claims describe the signed capture: only shown when the verdict ties this image to it.
         meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
@@ -531,6 +535,18 @@ def _utc(ts: int) -> str:
     from datetime import datetime, timezone
 
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _fetch_anchor(entry_id: str, ledger: Ledger, store: Store) -> tuple[Anchor | None, dict | None, str]:
+    """Per-photo anchor of an entry: its own tx, or rebuilt from a batch receipt (aggregated
+    anchoring). A batch tx itself is not a photo anchor. -> (anchor, batch info, error)."""
+    receipt = store.get_receipt(entry_id)
+    if receipt is not None:
+        return resolve_receipt(receipt, ledger)
+    a = ledger.fetch_anchor(entry_id)
+    if a is not None and a.batch_size:
+        return None, None, f"{entry_id} is a batch anchor, not the anchor of a photo"
+    return a, None, "" if a is not None else f"Anchor transaction {entry_id} not found on the ledger"
 
 
 def _authenticate(anchor: Anchor, manifest: Manifest, tx_hash: str, ledger: Ledger, store: Store) -> dict:
@@ -562,7 +578,7 @@ def _history(tx_hash: str | None, ledger: Ledger, store: Store, max_depth: int =
     """Walk the `parent` chain; each step is authenticated like the record itself."""
     out: list[dict] = []
     while tx_hash and len(out) < max_depth:
-        entry, anchor = store.get(tx_hash), ledger.fetch_anchor(tx_hash)
+        entry, anchor = store.get(tx_hash), _fetch_anchor(tx_hash, ledger, store)[0]
         if entry is None or anchor is None:
             out.append({"tx_hash": tx_hash, "op": None, "timestamp": None, "verified": False})
             break

@@ -233,3 +233,14 @@ Option pour Dev B : un champ `op=develop` (avec `parent`) dans `/api/sign`, à p
 - `/api/verify` : nouvelle clé `"disclosure_cid": "bafkrei…" | null`.
 - Export pour miroir : `uv run python -m veripress.cli export-disclosure <entry_id> --store store -o mirror/` → `mirror/<cid>.json`.
 - Limite (dite telle quelle) : pour un fichier ≤ 1 Mo, c'est le CID que donne `ipfs add --cid-version 1 --raw-leaves`. Au-delà, IPFS découpe en DAG, avec un autre CID racine : en production, on publierait le DAG (ou on épinglerait ce bloc brut).
+
+## Ancrage groupé (Q8)
+
+N enregistrements signés, **une** transaction XRPL. La signature de chaque photo ne change pas ; seul l'ancrage est mis en file.
+
+- Signature : `ledger = BatchingLedger(base_ledger, store)`, puis `sign_image(…, ledger, …)` comme d'habitude. On obtient un ancrage provisoire (`validated=False`) ; l'identifiant d'entrée est le digest du manifeste. Puis `ledger.flush()` → hash de la transaction du lot.
+- Feuille du lot : `leaf_hash("VPB1", index, "", JSON canonique {d, s, k, a, r, h})`, c'est-à-dire ce qu'un Memo individuel aurait porté.
+- Reçu par photo dans le store (`receipt.json`) : `{batch_tx, index, leaf, proof}`, ou `{queued: leaf}` avant le `flush`. La vérification recalcule la feuille et contrôle l'inclusion contre la racine on-chain, avec le nombre de feuilles lu sur la chaîne.
+- Ledger (Dev B pour `XrplLedger`) : `anchor_batch(root, count, wait=True) -> Anchor`, Memo `veripress/v1` `{"b": root, "n": count}`. `fetch_anchor` d'une telle transaction renvoie `Anchor(digest=root, batch_size=count, signature="", pubkey="")`.
+- `/api/verify` : nouvelle clé `"batch": {"tx_hash", "index", "size"} | null`.
+- Démo : `uv run python -m veripress.cli demo-batch photos… -o out/`.
