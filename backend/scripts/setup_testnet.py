@@ -16,7 +16,8 @@ credential is accepted, so --revoke / --reissue republish the right root by them
 
 Each subject also gets an ML-DSA-87 key (hybrid post-quantum signature, keys/<name>.json
 ["mldsa"]). The registry attests it, and the passkey, in the credential URI:
-"passkey:sha256:<hex>;mldsa87:sha256:<hex>". XRPL cannot edit a URI, so whenever the attested
+"passkey=<base64url sha256>;mldsa87=<base64url sha256>" (base64url: two hex hashes do not fit
+XRPL's 128-byte URI limit). XRPL cannot edit a URI, so whenever the attested
 keys change the credential is deleted and re-created (not retroactive: photos anchored before
 keep verifying), and every option rebuilds the full URI so none drops the other's part.
 Needs Node >= 20 and `cd zk && npm ci` for the ZK part.
@@ -235,9 +236,9 @@ def sync_registry(client: JsonRpcClient, registry: Wallet) -> None:
 
 def attest_passkey(client: JsonRpcClient) -> None:
     """The registry attests the device's passkey (decisions.md Q21): re-issue the device's
-    CAPTURE_DEVICE credential with URI "passkey:sha256:<hex>". XRPL cannot edit a credential's
-    URI, so it is deleted and re-created; photos anchored before keep verifying (revocation is
-    not retroactive). keys/passkey.json is written by the page (localhost only)."""
+    CAPTURE_DEVICE credential with URI "passkey=<base64url sha256>" (plus its ML-DSA-87 key).
+    XRPL cannot edit a credential's URI, so it is deleted and re-created; photos anchored
+    before keep verifying (revocation is not retroactive). keys/passkey.json is written by the page (localhost only)."""
     path = KEYS / "passkey.json"
     if not path.exists():
         sys.exit("no keys/passkey.json: register the passkey first (page, on localhost)")

@@ -97,7 +97,7 @@ class Ledger(Protocol):
 
     def credential_passkey(self, pubkey: str) -> str | None:
         """sha256 hex of the P-256 passkey public key attested in the URI of the key's
-        CAPTURE_DEVICE credential ("passkey:sha256:<hex>"), or None."""
+        CAPTURE_DEVICE credential ("passkey=<base64url sha256>"), or None."""
         ...
 
     def registry_root_at(self, at_time: int) -> str | None:
@@ -107,7 +107,7 @@ class Ledger(Protocol):
 
     def credential_pq(self, pubkey: str) -> str | None:
         """sha256 hex of the ML-DSA-87 public key attested in the key's credential URI
-        ("mldsa87:sha256:<hex>", alongside "passkey:sha256:<hex>" separated by ";"), or None."""
+        ("mldsa87=<base64url sha256>", after an optional "passkey=<…>", separated by ";"), or None."""
         ...
 
     def anchor_batch(self, root: str, count: int, wait: bool = True) -> Anchor:
@@ -543,11 +543,6 @@ class XrplLedger:
             _, h, close = _ledger_header(resp.result)
             hit = self._ledgers[index] = (h, close)
         return hit[1] if hit[0] == str(ledger_hash).upper() else None
-
-    # --- Hybrid post-quantum key attestation — TODO Dev B ---
-
-    def credential_pq(self, pubkey: str) -> str | None:
-        raise NotImplementedError("Dev B: parse 'mldsa87:sha256:<hex>' in the CAPTURE_DEVICE credential URI")
 
 
 # Keys the registry attests in a credential URI, ";"-separated (interfaces.md):

@@ -15,8 +15,9 @@
 1. Tile-level **semi-fragile Merkle tree** → localization of edits that survives recompression.
 2. **Verifiable redaction** at pixel/tile level (redactable-signature style).
 3. **XRPL as decentralized manifest repository**, bound to content via watermark + robust tree (anti watermark-copy).
-4. **Decentralized device/AI-generator PKI** with XRPL Credentials (revocable).
-5. **Hardware-backed signing in the browser** (WebAuthn) — no native app.
+4. **Decentralized device/AI-generator PKI** with XRPL Credentials (revocable, not retroactively).
+5. **Zero-knowledge proofs** on top of it: anonymous device attestation (the photo comes from *an* accredited device, not which one) and selective disclosure of capture time and place.
+6. **Hardware-backed signing in the browser** (WebAuthn passkey) — no native app; hybrid post-quantum signature (ML-DSA-87).
 
 ## Limits (prepare answers for the jury)
 
@@ -25,16 +26,20 @@
 3. **Recompression** breaks exact hashes → robust tree; trade-off between robustness and sensitivity (threshold tuning).
 4. **Perceptual features are attackable** → used for lookup/localization only, never as the authenticator; the signature over the exact root is the authenticator.
 5. **Watermark copy** → bound to robust tree in the anchor.
-6. **Key extraction** → hardware keys + credential revocation; still a trust assumption on the device registry.
-7. **Privacy** → only commitments on-chain; metadata revealed selectively; salted leaves.
-8. **Scale / cost** → aggregate many manifests per tx (Merkle of manifests) or Batch.
+6. **Key extraction** → hardware keys + credential revocation; still a trust assumption on the device registry. In the demo the "device" key is a software key on the server (or a laptop passkey).
+7. **Privacy** → only commitments on-chain; anonymous mode hides which device signed; capture time and GPS proven as coarse claims (day, ~10 km) in zero knowledge; salted leaves.
+8. **Scale / cost** → done: many manifests per transaction (Merkle root of the batch), since the Batch amendment is not on Testnet.
 9. **Lookup without watermark** → needs an off-chain indexer (XRPL has no similarity search).
+10. **Trusted setup** of the Groth16 circuits → single local phase-2 contribution for the demo; multi-party ceremony or PLONK / Halo2 in production.
+
+Full threat model and review: [`security-review.md`](security-review.md).
 
 ## Future work
 
 - ZK proof that a published image is a crop/resize/JPEG of a signed original (VerITAS / ZK-JPEG style).
-- Full C2PA manifest interop (emit VeriPress data as a C2PA assertion).
+- Fuller C2PA interop: we already embed a C2PA manifest pointing to the XRPL anchor (test certificate); next is a trust-list certificate and a standard VeriPress assertion.
 - Confidential MPT / commitments for private ownership of provenance records.
+- Sensor-level signing of the RAW (as in Apple Reference Image), instead of a server key or passkey.
 
 ## Sources
 
