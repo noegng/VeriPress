@@ -80,13 +80,22 @@ Payload = the tile's raw RGB bytes (no padding). One changed bit in a tile chang
 
 ### Robust tree (domain `VPR1`)
 
-Payload = quantised low-frequency features of the tile (`features.py`):
+Payload = quantised low-frequency features of the tile (`features.py`). For each channel:
 
-1. luminance (`0.299 R + 0.587 G + 0.114 B`);
-2. area-average the tile's real pixels into 8×8 cells (summed-area table, so merged edge tiles of any size are handled exactly);
-3. orthonormal 2-D DCT-II;
-4. keep the first 10 coefficients in zig-zag order (DC included);
-5. divide by a step of 4 and round to `int16`.
+1. area-average the tile's real pixels into 8×8 cells (summed-area table, so merged edge tiles of any size are handled exactly);
+2. orthonormal 2-D DCT-II;
+3. keep the first coefficients in zig-zag order (DC included);
+4. divide by a step of 4 and round to `int16`.
+
+Channels and coefficients (21 values per tile):
+
+| Channel | Coefficients | What they catch |
+|---|---|---|
+| Luminance (`0.299 R + 0.587 G + 0.114 B`) | 0–9 | Shapes and brightness |
+| Luminance | 10–14 | Finer detail (erased by blurring) |
+| Cb, Cr (colour) | 0–2 each | A recolouring that keeps the luminance |
+
+The feature parameters are in the signed manifest. Records signed before the adversarial review used luminance coefficients 0–9 only, and still verify with those parameters.
 
 When the image is watermarked, the leaf also commits the features of the **unwatermarked original** (`f ‖ g`), so the robust tree vouches for both versions (see § 6).
 
@@ -100,7 +109,7 @@ The manifest is what gets signed. It is serialised as canonical JSON (sorted key
 |---|---|
 | `width`, `height`, `tile` | Grid (fixes the number of leaves) |
 | `exact_root`, `robust_root` | Roots of the two trees |
-| `feature` | `{"pool": 8, "n": 10, "step": 4}`: feature parameters, checked by the verifier |
+| `feature` | `{"pool": 8, "n": 15, "step": 4, "chroma": 3}`: feature parameters, checked by the verifier (first records: `{"pool": 8, "n": 10, "step": 4}`) |
 | `signer` | XRPL Ed25519 public key of the device or AI generator (`""` when anonymous) |
 | `op` | `capture`, `ai_generate`, `edit` (has a `parent`) or `develop` (RAW → JPEG) |
 | `parent` | Anchor tx hash of the version this one derives from (version chain) |
@@ -134,11 +143,11 @@ The XRPL account key *is* the device key: the device's Ed25519 public key derive
 - Model: Adobe **TrustMark** (variant Q, BCH_4 error correction), payload 68 bits = 4-bit version + 64-bit id.
 - The id is **random**, chosen at signing and written in the signed manifest (`wm_id`). The image is watermarked **before** its tiles are committed, so the exact root covers the watermarked pixels.
 - The watermark is only a **pointer**. It never decides the verdict: the signature and the Merkle roots do.
-- **Copied watermark:** a watermark pasted onto another picture leads to a record whose tiles do not match. If the record was found by watermark and more than half the tiles changed, the verdict is ⚪ *Unknown* ("copied watermark?").
+- **Copied watermark:** a watermark pasted onto another picture leads to a record whose tiles do not match. When more than half the tiles changed, the verdict is ⚪ *Unknown* ("copied watermark?"), not 🟠: the picture is not a retouch of that record's photo. The same rule applies however the record was found (explicit id, perceptual hash).
 - **The unwatermarked original also verifies.** Watermarking moves some features by up to ~20 quantisation steps, so the gallery original used to come out 🟠. The robust leaf now commits both versions (`f` and `g`), and a tile matches if it is close to either. We rejected the alternative, re-watermarking at verification, because it would put a neural network inside the verdict (adversarial inputs, dependence on a model version). The original never verifies as *exact*, since its pixels are not the watermarked ones; the reason says it "matches the original capture (unwatermarked)".
 - Fallback when no watermark is readable: a 64-bit perceptual hash of the whole image (32×32 grey → DCT → top-left 8×8 → bit = coefficient > median), nearest record within a Hamming distance of 10. Used only to find a record, never to authenticate. In production this needs an off-chain index: XRPL has no similarity search.
 
-Lookup order at verification: explicit entry id ▸ watermark (the pHash picks among the original and its redacted variants) ▸ nearest pHash.
+Lookup at verification: an explicit entry id is used alone. Otherwise every record carrying the watermark id, then every record within the pHash distance, is a **candidate** (up to 8), and each one is fully verified; the best-supported verdict wins (real / AI, then edited, then fewer changed tiles). The store is untrusted and anyone can list a record in it: a planted "redacted variant" of a real photo, or a real record re-listed under a forged pHash, used to be picked first and hide the genuine record. Picking the best is sound because each verdict only claims what the chain proves about that record.
 
 ## 7. XRPL usage (Testnet)
 
@@ -185,11 +194,12 @@ The unwatermarked original is **not** kept: only its features (`g`) are.
 4. **Authenticate the disclosure**: rebuild both trees from the published leaves and features; the roots must equal the signed ones.
 5. **Compare tiles.** Bring the image back to the signed size (Lanczos in floating point, without clipping, so thin dark lines on a bright background do not shift a tile's mean). Then for each tile:
    - **exact**: its recomputed exact leaf equals the committed one;
-   - **robust**: distance ≤ 4.5 steps. The distance is the largest gap over the 10 coefficients, in quantisation steps, with the DC coefficient weighted 0.5 (mean brightness drifts more than structure under resampling). It is the smaller of the distances to the watermarked and to the original features;
+   - **robust**: distance ≤ 4.5 steps. The distance is the largest weighted gap over the coefficients, in quantisation steps. Weights: 0.5 on the luminance DC (mean brightness drifts more than structure under resampling), 0.75 on the detail coefficients (thin periodic lines alias when downscaled), 0.25 on colour (JPEG halves the colour resolution; a recolouring still moves it by 50+ steps). It is the smaller of the distances to the watermarked and to the original features;
    - **redacted**: authenticated by hash only. The received pixels must really be black (mean ≤ 16, 95th percentile ≤ 48), otherwise anything could be pasted under a "redacted" label;
    - **changed**: otherwise.
-6. **Tile verdict:** `edited` if any tile changed, else `recompressed` if any tile is only robust, else `intact`.
-7. **Final verdict**: rules below, first match wins.
+6. **Lossless copies.** If at least half of the *textured* tiles (any luminance AC coefficient ≥ 1 step) are still byte-identical, the copy is lossless and has no recompression noise to forgive. Then every *robust* tile is counted as **changed** (a subtle recolouring or light blur), and a redacted tile must be truly black (99th percentile ≤ 8). Flat tiles are left out of the count because they can survive a JPEG byte for byte.
+7. **Tile verdict:** `edited` if any tile changed, else `recompressed` if any tile is only robust, else `intact`.
+8. **Final verdict**: rules below, first match wins.
 
 | Condition | Verdict |
 |---|---|
@@ -197,9 +207,9 @@ The unwatermarked original is **not** kept: only its features (`g`) are.
 | Anchor missing on the ledger | ⚪ Unknown |
 | Stored manifest ≠ anchored digest or signer | ⚪ Unknown |
 | Signature, ZK proof or passkey assertion invalid; passkey not attested; registry root not in force | ⚪ Unknown |
-| ML-DSA-87 declared but missing, invalid or not attested (no downgrade) | ⚪ Unknown |
+| ML-DSA-87 declared but missing, invalid or not attested; or not declared although the registry attested an ML-DSA key at anchor time (no downgrade) | ⚪ Unknown |
 | Disclosure does not match the signed roots | ⚪ Unknown |
-| Found by watermark and more than half the tiles changed | ⚪ Unknown (copied watermark) |
+| More than half the tiles changed | ⚪ Unknown (not this record's photo; "copied watermark?" when found by watermark) |
 | Some tiles changed | 🟠 Edited, with heatmap |
 | More than 50 % of the tiles redacted | ⚪ Unknown (proves too little) |
 | `op = develop`, chain verified, same named device | 🟢 Real (else 🟠) |
@@ -218,6 +228,8 @@ Measured on real photos, then frozen in `features.py`:
 
 - 6 camera photos of 3–5k px (Wikimedia Commons) shared WhatsApp-like (1,600 px q72 and 1,280 px q55): largest benign distance 2.96 for a tolerance of 4.5. A copy-move of 2 tiles is detected 100 % of the time, of half a tile 78 %.
 - 4 iPhone HEIC photos (Display P3) really sent through WhatsApp: largest benign distance 2.01 after ICC conversion, unclipped resampling and DC weighting. The original, the signed version, and WhatsApp copies of both all verify 🟢. A half-tile edit is still detected 97 % of the time.
+- Colour and detail features (adversarial review), same 4 iPhone photos (real WhatsApp copies, plus simulated 1,600 px q72 and 1,280 px q55, signed and original, found without id): all 16 copies 🟢, largest weighted distance 3.97. Detected after JPEG: a recolouring of 4×4 tiles that keeps the luminance; a Gaussian blur of radius ≥ 5 px over a region. In a lossless copy, any of these edits is detected.
+- Not detected after JPEG: a blur of radius ≤ 4 px, or the blurring of a detail as small as a licence plate (100×30 px). Once a platform downscales a 12 MP photo to 1,280 px, such details are already gone from the authentic copies too, so no tolerance can tell them apart.
 - `uv run python -m veripress.cli calibrate` re-runs the measurement.
 
 Performance on a 12 MP photo: signing ~2 s, verification ~2 s (plus ~2 s per ZK proof).
@@ -228,6 +240,7 @@ Performance on a 12 MP photo: signing ~2 s, verification ~2 s (plus ~2 s per ZK 
 - The registry attests the key's SHA-256 in the Credential `URI`. Only an attested key is used; until then, signing is Ed25519 only.
 - The manifest then carries `pq_pubkey_sha256`, and the ML-DSA signature over the digest is stored in `pq.json`.
 - A manifest that declares the key **requires** a valid ML-DSA signature and an attested key, otherwise ⚪: deleting the file cannot downgrade the record.
+- A manifest that does **not** declare it is ⚪ too if the registry attested an ML-DSA key for this device at anchor time: otherwise a forger holding only the Ed25519 key (after Q-day) could simply leave the field out. Attestations are read as they were at anchor time, so photos anchored before the key was attested keep verifying.
 - Never in anonymous mode: the key would identify the device.
 - Still not post-quantum: Groth16 proofs on BN254 (their soundness; anonymity is perfect zero-knowledge and holds), P-256 passkeys, the C2PA ES256 signature, XRPL account signatures. After "Q-day", the XRPL timeline still prevents back-dating a forged signature.
 
@@ -258,6 +271,7 @@ Circom 2 circuits, Groth16 on BN254, `snarkjs` + `circomlib`, driven by `zk/cli.
 - At signing, EXIF `DateTimeOriginal` (+ time zone) and GPS are committed in the signed manifest: `meta_commitment = Poseidon(time, lat×10⁶ + 90×10⁶, lon×10⁶ + 180×10⁶, salt)`. The salt is secret and never stored.
 - Two claims are proven and published: "taken on day D" (local day, 24 h interval) and "within a ~10 km box around …" (centre rounded to 0.01°). The exact time and position are never published.
 - At verification each proof must be bound to the commitment in the signed manifest, and labels are recomputed from the verified public inputs, never read from stored text. Claims are hidden when the verdict is ⚪.
+- EXIF is input to the signer, so the proofs show what the signed EXIF says, not that it is true. One impossibility is caught: a capture day that starts after the anchor (T1, with 1 h of clock skew) is shown as unproven.
 
 ### Trusted setup
 
@@ -279,4 +293,4 @@ Phase 1 comes from the public *Perpetual Powers of Tau* ceremony (PSE, 80 contri
 - **ZK:** circom 2, `snarkjs`, `circomlib` (Node ≥ 20). Compiled circuits and verification keys are committed: the backend runs without circom.
 - **Front end:** a single HTML page served by FastAPI (vanilla JS, canvas, WebAuthn).
 - **Network:** XRPL Testnet.
-- **Tests:** 267 automated tests (`cd backend && uv run python -m pytest`), including dedicated security tests; the XRPL tests run against Testnet with `VERIPRESS_NET=1`.
+- **Tests:** 288 automated tests (`cd backend && uv run python -m pytest`), including dedicated security tests; the XRPL tests run against Testnet with `VERIPRESS_NET=1`.

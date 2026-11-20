@@ -95,7 +95,7 @@ def test_pq_key_swapped_for_the_attackers_own_is_unknown(photo, setup):
 def test_attestation_withdrawn_after_signing_is_unknown(photo, setup):
     ledger, store, device, _ = setup
     signed, png = sign_image(photo, "device", ledger, store)
-    ledger.pq_keys[device] = "00" * 32
+    ledger.pq_keys[device] = (0, "00" * 32)  # (attested since, sha256)
     report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
     assert report.verdict == FinalVerdict.UNKNOWN and report.post_quantum["attested"] is False
 

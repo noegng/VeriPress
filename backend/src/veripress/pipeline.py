@@ -375,9 +375,13 @@ def _check_passkey(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledg
     return ok, attested
 
 
-def _meta_claims(manifest: Manifest, stored: list[dict]) -> list[dict]:
+CLOCK_SKEW_S = 3600  # camera clocks drift: a capture day may start up to 1 h after the anchor
+
+
+def _meta_claims(manifest: Manifest, stored: list[dict], anchored_at: int) -> list[dict]:
     """Verified capture-metadata claims. Each proof must be bound to the commitment in the
-    signed manifest; labels come from its public inputs, never from stored text."""
+    signed manifest; labels come from its public inputs, never from stored text. EXIF is input
+    to the signer, so a claim must also be possible: no capture day after the anchor (T1)."""
     out = []
     for c in stored if manifest.meta_commitment else []:
         public = c.get("public") if isinstance(c, dict) else None
@@ -388,7 +392,10 @@ def _meta_claims(manifest: Manifest, stored: list[dict]) -> list[dict]:
         except (TypeError, ValueError):
             continue
         ok = str(public[0]) == manifest.meta_commitment and zk.verify_meta(c.get("proof", {}), public)
-        out.append({"kind": kind, "label": label, "proof_ok": bool(ok)})
+        claim = {"kind": kind, "label": label, "proof_ok": bool(ok)}
+        if kind == "day" and int(public[1]) > anchored_at + CLOCK_SKEW_S:
+            claim.update(proof_ok=False, note="capture day after the anchor time: impossible")
+        out.append(claim)
     return out
 
 
@@ -433,22 +440,46 @@ def verify_image(
     rgb: np.ndarray, ledger: Ledger, store: Store, entry_id: str | None = None
 ) -> tuple[Report, bytes | None]:
     """Find the entry (entry_id > watermark > phash), check anchor/signature/credential/tiles.
-    Returns the report and the heatmap PNG (None when no entry was found)."""
-    found_by: FoundBy | None = None
+    Returns the report and the heatmap PNG (None when no entry was found).
+
+    The store is untrusted, and anyone can list records in it (a fake "redacted variant" of a real
+    photo, a real record under a forged perceptual hash): without an explicit id, every candidate
+    found by the watermark or the perceptual hash is verified, and the best-supported one wins.
+    Each verdict only ever claims what the chain proves about that record, so picking the best is
+    sound; it just stops a planted record from hiding the genuine one."""
     if entry_id:
-        entry, found_by = store.get(entry_id), "tx_hash"
+        candidates = [(store.get(entry_id), "tx_hash")]
     else:
-        entry, ph = None, phash(rgb)
+        ph = phash(rgb)
         wm = watermark.extract(rgb) if watermark.enabled() else None
-        if wm is not None:
-            entry = store.find_by_watermark(wm.hex(), ph)
-            found_by = "watermark" if entry else None
-        if entry is None:
-            entry = store.nearest(ph)
-            found_by = "phash" if entry else None
-    if entry is None:
+        candidates = [(e, "watermark") for e in (store.find_all_by_watermark(wm.hex(), ph) if wm else [])]
+        seen = {e.id for e, _ in candidates}
+        candidates += [(e, "phash") for e in store.nearest_all(ph) if e.id not in seen]
+        candidates = candidates[:MAX_CANDIDATES]
+    candidates = [(e, f) for e, f in candidates if e is not None]
+    if not candidates:
         reason = f"No provenance record for id {entry_id}" if entry_id else "No provenance found for this image"
         return Report(FinalVerdict.UNKNOWN, reason, None, None, None, None, False, None), None
+    best = max((_verify_entry(rgb, e, f, ledger, store) for e, f in candidates), key=_support)
+    report, manifest = best
+    hm = _png(heatmap(rgb, manifest, report.tiles)) if report.tiles is not None and report.tiles.statuses else None
+    return report, hm
+
+
+MAX_CANDIDATES = 8
+
+
+def _support(result: tuple["Report", Manifest | None]) -> tuple:
+    """How well a candidate record supports the image: verdict first, then fewer changed tiles."""
+    r = result[0]
+    rank = {FinalVerdict.REAL: 2, FinalVerdict.AI: 2, FinalVerdict.EDITED: 1}.get(r.verdict, 0)
+    c = r.tiles.counts() if r.tiles is not None and r.tiles.statuses else {"changed": 10**9, "redacted": 10**9}
+    return rank, -c["changed"], -c["redacted"]
+
+
+def _verify_entry(rgb: np.ndarray, entry: Entry, found_by: FoundBy, ledger: Ledger, store: Store
+                  ) -> tuple["Report", Manifest | None]:
+    """Verify the image against one record. Returns the report and the record's manifest."""
     manifest = entry.manifest
     anchor, batch_info, err = _fetch_anchor(entry.tx_hash, ledger, store)
     if anchor is None:
@@ -482,6 +513,10 @@ def verify_image(
     elif not sig_ok:
         verdict = FinalVerdict.UNKNOWN
         reason = "Anchored signature does not verify against the signer key"
+    elif auth["pq"] and auth["pq"].get("missing"):
+        verdict = FinalVerdict.UNKNOWN
+        reason = ("No post-quantum (ML-DSA-87) signature, although the registry attested one for this "
+                  "device when it was anchored (downgrade to Ed25519 only)")
     elif auth["pq"] and not auth["pq"]["signature_ok"]:
         verdict = FinalVerdict.UNKNOWN
         reason = "Post-quantum (ML-DSA-87) signature declared by the manifest is missing or invalid"
@@ -491,9 +526,13 @@ def verify_image(
     elif tiles.verdict == Verdict.INVALID_DISCLOSURE:
         verdict = FinalVerdict.UNKNOWN
         reason = "Tile disclosure does not match the signed Merkle roots"
-    elif found_by == "watermark" and tiles.counts()["changed"] > len(tiles.statuses) // 2:
+    elif tiles.counts()["changed"] > len(tiles.statuses) // 2:
+        # Not "edited": an unrelated picture checked against a record (planted link, forged
+        # perceptual hash, copied watermark) is not a retouch of that record's photo.
         verdict = FinalVerdict.UNKNOWN
-        reason = "Watermark points to a record whose content does not match this image (copied watermark?)"
+        reason = ("Watermark points to a record whose content does not match this image (copied watermark?)"
+                  if found_by == "watermark" else
+                  "This image does not match the record it was checked against (most tiles differ)")
     elif tiles.verdict == Verdict.EDITED:
         verdict = FinalVerdict.EDITED
         c = tiles.counts()
@@ -564,10 +603,10 @@ def verify_image(
         post_quantum=auth["pq"],
         passkey=is_passkey,
         # Claims describe the signed capture: only shown when the verdict ties this image to it.
-        meta_claims=[] if verdict == FinalVerdict.UNKNOWN else _meta_claims(manifest, store.get_meta(entry.tx_hash)),
+        meta_claims=[] if verdict == FinalVerdict.UNKNOWN
+        else _meta_claims(manifest, store.get_meta(entry.tx_hash), anchor.timestamp),
     )
-    hm = _png(heatmap(rgb, manifest, tiles)) if tiles.statuses else None
-    return report, hm
+    return report, manifest
 
 
 def verify_stored(entry_id: str, ledger: Ledger, store: Store) -> tuple[Report, bytes | None]:
@@ -616,13 +655,22 @@ def _authenticate(anchor: Anchor, manifest: Manifest, tx_hash: str, ledger: Ledg
         out.update(sig_ok=verify_signature(anchor.digest, anchor.signature, anchor.pubkey),
                    credential=ledger.credential_type(anchor.pubkey, anchor.timestamp))
     out["pq"] = None
-    if manifest.pq_pubkey_sha256:  # declared in the signed manifest: mandatory (no downgrade)
+    if not manifest.pq_pubkey_sha256 and not anchor.anonymous:
+        # The device had an attested ML-DSA-87 key when this was anchored, yet the manifest does
+        # not use it: an Ed25519-only forgery (e.g. after Q-day) must not pass (no downgrade).
+        try:
+            attested_then = ledger.credential_pq(anchor.pubkey, at_time=anchor.timestamp)
+        except Exception:  # noqa: BLE001 — not implemented / network: as before, no requirement
+            attested_then = None
+        if attested_then:
+            out["pq"] = {"alg": PQ_ALG, "signature_ok": False, "attested": True, "missing": True}
+    elif manifest.pq_pubkey_sha256:  # declared in the signed manifest: mandatory (no downgrade)
         pqb = store.get_pq(tx_hash) or {}
         pub = str(pqb.get("public_key", ""))
         sig_pq = (pqb.get("alg") == PQ_ALG and _sha256_hex(pub) == manifest.pq_pubkey_sha256
                   and verify_pq(anchor.digest, str(pqb.get("signature", "")), pub))
         try:
-            attested = ledger.credential_pq(anchor.pubkey) == manifest.pq_pubkey_sha256
+            attested = ledger.credential_pq(anchor.pubkey, at_time=anchor.timestamp) == manifest.pq_pubkey_sha256
         except Exception:  # noqa: BLE001
             attested = False
         out["pq"] = {"alg": PQ_ALG, "signature_ok": bool(sig_pq), "attested": bool(attested)}

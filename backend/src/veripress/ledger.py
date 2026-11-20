@@ -105,9 +105,10 @@ class Ledger(Protocol):
         by the registry before that instant), or None."""
         ...
 
-    def credential_pq(self, pubkey: str) -> str | None:
+    def credential_pq(self, pubkey: str, at_time: int | None = None) -> str | None:
         """sha256 hex of the ML-DSA-87 public key attested in the key's credential URI
-        ("mldsa87=<base64url sha256>", after an optional "passkey=<…>", separated by ";"), or None."""
+        ("mldsa87=<base64url sha256>", after an optional "passkey=<…>", separated by ";"), or None.
+        `at_time`: the attestation in force at that instant (None = the latest)."""
         ...
 
     def anchor_batch(self, root: str, count: int, wait: bool = True) -> Anchor:
@@ -132,21 +133,24 @@ class FakeLedger:
         self.credentials: dict[str, CredentialType] = {}
         self.revoked_at: dict[str, int] = {}
         self.passkeys: dict[str, str] = {}
-        self.pq_keys: dict[str, str] = {}
+        self.pq_keys: dict[str, tuple[int, str]] = {}  # pubkey -> (attested since, sha256 hex)
         self.registry_roots: list[tuple[int, str]] = []  # (published at, root), in order
         self.ledgers: dict[int, tuple[str, int]] = {}  # index -> (hash, close time)
 
     def issue(self, pubkey: str, ctype: CredentialType, passkey_hash: str | None = None,
-              pq_hash: str | None = None) -> None:
+              pq_hash: str | None = None, at: int | None = None) -> None:
+        """`at`: when the attestations take effect (default: now), like the CredentialCreate
+        time that XrplLedger reads from the registry history."""
         self.credentials[pubkey] = ctype
         self.revoked_at.pop(pubkey, None)
         if passkey_hash:
             self.passkeys[pubkey] = passkey_hash
         if pq_hash:
-            self.pq_keys[pubkey] = pq_hash
+            self.pq_keys[pubkey] = (int(time.time()) if at is None else at, pq_hash)
 
-    def credential_pq(self, pubkey: str) -> str | None:
-        return self.pq_keys.get(pubkey)
+    def credential_pq(self, pubkey: str, at_time: int | None = None) -> str | None:
+        since, sha = self.pq_keys.get(pubkey, (0, None))
+        return sha if sha and (at_time is None or at_time >= since) else None
 
     def revoke(self, pubkey: str, at: int | None = None) -> None:
         if pubkey in self.credentials:

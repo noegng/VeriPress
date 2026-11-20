@@ -136,3 +136,14 @@ def test_claims_are_not_shown_when_the_image_is_not_vouched_for(photo, setup):
     report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
     assert report.verdict.value == "unknown"
     assert report.meta_claims == []
+
+
+def test_capture_day_after_the_anchor_is_not_proven(photo, setup):
+    """Adversarial review: EXIF is input. A capture day that starts after the anchor's ledger
+    closed is impossible, whatever the proof says: shown as unproven."""
+    ledger, store = setup
+    signed, png = sign_image(photo, "device", ledger, store, exif=exif_bytes(dt="2031:06:01 12:00:00"))
+    report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
+    day = next(c for c in report.meta_claims if c["kind"] == "day")
+    assert day["label"] == "1 Jun 2031" and day["proof_ok"] is False
+    assert "after" in day.get("note", "")

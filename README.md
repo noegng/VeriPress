@@ -66,7 +66,7 @@ Designed to **complement** C2PA, not replace it: the published PNG also carries 
 ```bash
 cd zk && npm ci                                   # once (ZK tool)
 cd backend
-uv run python -m pytest                           # 267 tests
+uv run python -m pytest                           # 288 tests
 uv run python -m veripress.cli demo photo.jpg -o out/   # demo scenarios, offline
 uv run python scripts/setup_testnet.py            # keys, XRPL Testnet accounts, Credentials, registry
 VERIPRESS_LEDGER=xrpl uv run uvicorn veripress.api:app  # → http://localhost:8000
@@ -79,6 +79,7 @@ Without `VERIPRESS_LEDGER`, the API runs on an in-memory ledger that trusts the 
 - We prove **origin**, not "not AI". No proof = unknown, not fake.
 - The **analog hole**: photographing a screen with a trusted device still yields a "real" signature.
 - Perceptual features are attackable → used for **lookup and localization only**, never as the authentication itself.
+- After JPEG, 🟢 vouches for each tile's shapes, colours and coarse texture, not for every fine detail: blurring something as small as a licence plate still passes once the image is shared (in a lossless copy, it is detected). See [`docs/security-review.md`](docs/security-review.md#adversarial-review-night-of-2021-nov).
 - Device keys can be extracted; mitigated (not solved) by hardware-backed passkeys + credential revocation. In the demo, the "device" key is a software key on the server.
 - The Groth16 trusted setup uses a single local phase-2 contribution (demo only).
 

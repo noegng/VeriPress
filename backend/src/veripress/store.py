@@ -141,6 +141,25 @@ class Store:
                     best = (dist, d["id"])
         return self.get(best[1]) if best else None
 
+    def find_all_by_watermark(self, wm_id: str, phash: int) -> list[Entry]:
+        """Every entry whose manifest carries this watermark id, closest perceptual hash first.
+        The store is untrusted: anyone may add a variant, so callers verify each candidate."""
+        found = []
+        for p in self.root.glob("*/entry.json"):
+            d = json.loads(p.read_text())
+            if d["manifest"].get("wm_id") == wm_id:
+                found.append(((phash ^ int(d["phash"], 16)).bit_count(), "-r" in d["id"], d["id"]))
+        return [e for _, _, i in sorted(found) if (e := self.get(i)) is not None]
+
+    def nearest_all(self, phash: int, max_distance: int = 10) -> list[Entry]:
+        """Every entry within max_distance of the perceptual hash, closest first (untrusted)."""
+        found = []
+        for p in self.root.glob("*/entry.json"):
+            dist = (phash ^ int(json.loads(p.read_text())["phash"], 16)).bit_count()
+            if dist <= max_distance:
+                found.append((dist, "-r" in p.parent.name, p.parent.name))
+        return [e for _, _, i in sorted(found) if (e := self.get(i)) is not None]
+
     def nearest(self, phash: int, max_distance: int = 10) -> Entry | None:
         """Closest entry by Hamming distance on the perceptual hash, if within max_distance."""
         best: tuple[int, str] | None = None

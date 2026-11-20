@@ -14,7 +14,7 @@ How the two developers worked in parallel without conflicts: [`team-rules.md`](t
 
 ## What is implemented
 
-Everything below runs end to end on **XRPL Testnet** and is covered by automated tests (267).
+Everything below runs end to end on **XRPL Testnet** and is covered by automated tests (288).
 
 | Feature | Status |
 |---|---|

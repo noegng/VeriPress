@@ -13,7 +13,7 @@ Team rule: any change to this file, to `ledger.py`, to `store.py` or to the sign
 | `pipeline.py` | `sign_image`, `prepare_passkey_sign`, `complete_passkey_sign`, `verify_image`, `verify_stored`, `redact_image`; `SignResult.to_json`, `Report.to_json` |
 | `ledger.py` | `Ledger` (protocol), `FakeLedger` (in memory), `XrplLedger` (Testnet) |
 | `batching.py` | `BatchingLedger(base, store)`: queue anchors, `flush()` = one transaction |
-| `store.py` | Off-chain records (layout in `architecture.md` § 8); `find_by_watermark(wm_id, phash)`, `nearest(phash)` |
+| `store.py` | Off-chain records (layout in `architecture.md` § 8); `find_all_by_watermark(wm_id, phash)`, `nearest_all(phash)` (candidates, closest first) |
 | `watermark.py` | TrustMark `embed`, `extract`, `warm_up()` (load the models at API start-up). `VERIPRESS_WATERMARK=0` disables it |
 | `signing.py` | Ed25519 keys, `verify_webauthn`, ML-DSA-87 (`load_pq_key`, `verify_pq`) |
 | `zk.py` | Wrapper around `node zk/cli.mjs` |
@@ -64,7 +64,7 @@ class Ledger(Protocol):
                                                                  # (the pipeline always passes the anchor time)
     def credential_revoked_at(self, pubkey) -> int | None: ...   # unix time of the CredentialDelete
     def credential_passkey(self, pubkey) -> str | None: ...      # SHA-256 hex of the attested P-256 key
-    def credential_pq(self, pubkey) -> str | None: ...           # SHA-256 hex of the attested ML-DSA-87 key
+    def credential_pq(self, pubkey, at_time=None) -> str | None: ...  # SHA-256 hex of the ML-DSA-87 key attested at that instant
     def registry_root_at(self, at_time) -> str | None: ...       # anonymous registry root in force
     def latest_validated(self) -> tuple[int, str, int]: ...      # (index, hash, close_time): T0
     def ledger_close_time(self, ledger_index, ledger_hash) -> int | None: ...  # None if the hash does not match
@@ -208,10 +208,10 @@ Multipart: `image`, optional `entry_id`.
 - `zk` (anonymous mode only): `{"proof_ok", "registry_root", "root_valid_at_anchor"}`; `anchor.signer` is then `""`.
 - `credential_revoked_at`: set when the device was revoked **after** the anchor; the verdict stays `real`.
 - `pending: true`: provisional verdict; `reason` starts with "Anchor pending validation".
-- `meta_claims`: `[]` without a metadata commitment, or when the verdict is `unknown`. The area label is the box centre rounded to 0.01° (no reverse geocoding).
+- `meta_claims`: `[]` without a metadata commitment, or when the verdict is `unknown`. The area label is the box centre rounded to 0.01° (no reverse geocoding). A day claim that starts after the anchor gets `"proof_ok": false` and `"note": "capture day after the anchor time: impossible"`.
 - `time_window`: `[T0, T1]`; `null` when nothing is found.
 - `batch`: `{"tx_hash", "index", "size"}` for an aggregated anchor.
-- `post_quantum`: `null` unless the manifest declares an ML-DSA key.
+- `post_quantum`: `null` unless the manifest declares an ML-DSA key, or the registry attested one for the device at anchor time while the manifest does not use it: then `{"alg", "signature_ok": false, "attested": true, "missing": true}` and the verdict is `unknown` (downgrade).
 - `c2pa`: read from the uploaded **bytes**, never the pixels. `null` (no manifest, e.g. after WhatsApp) or `{"tx_hash", "manifest_digest", "explorer", "source_type", "state", "signer_trusted", "matches_anchor"}`. Information only: the verdict never depends on it.
 
 ### `POST /api/redact`
