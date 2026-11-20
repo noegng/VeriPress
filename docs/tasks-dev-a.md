@@ -19,11 +19,11 @@ Lire d'abord [`team-rules.md`](team-rules.md) et [`interfaces.md`](interfaces.md
 6. **Filigrane TrustMark** (`watermark.py`) : `embed(rgb, entry_id) -> rgb`, `extract(rgb) -> entry_id | None`. L'identifiant tient en ~64 bits : utiliser les 16 premiers hex du tx_hash et faire la recherche par préfixe dans le store. Sur `main`, faire `uv add trustmark` dans un commit dédié. Brancher le module dans `sign_image` (image publiée tatouée, **commit fait sur l'image tatouée**) et dans `verify_image`. Tester la survie à WhatsApp.
    → **Étape 5** : filigrane recopié sur une autre image → `robust` ne correspond pas → `edited` ou `unknown` avec la raison « watermark does not match content ».
 7. `redact_image` (le cœur `redact` existe déjà) pour l'étape 4 côté page.
-8. Vraie passkey WebAuthn (si Dev B n'est pas dessus).
+8. ~~Vraie passkey WebAuthn~~ → décidé le 20/11 : laissée à Dev B (P-256 ≠ clés XRPL, il faut lier la passkey au compte XRPL de l'appareil).
 9. Chaîne de versions : champ `parent` dans le manifeste, `verify_image` remonte la chaîne.
 
 ## Journal de passage de relais
 <!-- 3 lignes : ce qui marche / ce qui reste / comment lancer -->
 - **20/11 soir — fait** : tâches 1, 2, 3, 6 (filigrane + étape 5), 7 (masquage), 9 (chaîne de versions), plus `tileproof.cli demo` (les 6 scénarios hors ligne). 50 tests au vert. 12 MP : signature ~2 s, vérification ~2 s.
-- **Reste** : tâche 4 (calibrage sur de vraies photos de téléphone passées par WhatsApp), tâche 5 (vraie image IA), option 8 (passkey). `/security-review` fait : faille de masquage (image arbitraire → 🟢) corrigée + tests de régression.
+- **Reste** : tâche 4 (calibrage sur de vraies photos de téléphone passées par WhatsApp), tâche 5 (vraie image IA), `/security-review` fait : faille de masquage (image arbitraire → 🟢) corrigée + tests de régression.
 - **Lancer** : `cd backend && uv run python -m pytest` · `uv run python -m tileproof.cli demo photo.jpg -o out/`. Le premier usage du filigrane télécharge les modèles TrustMark (~3 min) : appeler `watermark.warm_up()` au démarrage de l'API.
