@@ -9,6 +9,7 @@ Toute modification de ce fichier, de `ledger.py`, `store.py` ou des signatures d
 | `tileproof/ledger.py` | Dev B | `Ledger` (protocole), `FakeLedger` (mémoire), `XrplLedger` (Testnet) |
 | `tileproof/store.py` | Dev A | stockage hors chaîne : manifeste + divulgation + image publiée + phash ; `find_by_watermark(wm_id, phash)` |
 | `tileproof/watermark.py` | Dev A | TrustMark : `embed`, `extract`, `warm_up()` (charge les modèles ; à appeler au démarrage de l'API). `TILEPROOF_WATERMARK=0` le désactive |
+| `tileproof/tiling.py` | Dev A | `load_upload(data: bytes, filename: str \| None) -> np.ndarray` : **point d'entrée pour les fichiers envoyés à l'API**. Gère JPEG/PNG/HEIC/WebP/AVIF/TIFF (y compris 16 bits), conversion ICC → sRGB, orientation EXIF, et les RAW d'appareils photo (CR2/CR3/NEF/ARW/RAF/RW2/ORF/DNG…, via LibRaw). Lève `ValueError` si illisible. Ne pas passer par `Image.open` avant : Pillow lit un RAW comme sa petite vignette d'aperçu |
 | `tileproof/pipeline.py` | Dev A | `sign_image`, `verify_image`, `redact_image`, `Report.to_json` |
 | `tileproof/api.py` | Dev B | FastAPI, appelle uniquement `pipeline.*` |
 

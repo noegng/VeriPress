@@ -28,14 +28,58 @@ def auto_tile(width: int, height: int) -> int:
 _SRGB = ImageCms.createProfile("sRGB")
 
 
+def _to_8bit(img: Image.Image) -> Image.Image:
+    """High bit depth single-channel modes (16-bit TIFF/PNG exports, float) scaled to 8 bits.
+    Pillow's own convert() clips them at 255 instead of scaling."""
+    if img.mode.startswith("I;16") or img.mode == "I":
+        a = np.asarray(img).astype(np.float64)
+        scale = 257.0 if a.max() > 255 else 1.0  # "I" may also hold plain 8-bit values
+        return Image.fromarray(np.clip(np.rint(a / scale), 0, 255).astype(np.uint8), "L")
+    if img.mode == "F":
+        a = np.asarray(img).astype(np.float64)
+        a = a * 255.0 if a.max() <= 1.0 else a  # normalised [0, 1] or already 0-255
+        return Image.fromarray(np.clip(np.rint(a), 0, 255).astype(np.uint8), "L")
+    return img
+
+
+RAW_EXTENSIONS = {".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".raf", ".rw2", ".orf", ".pef", ".dng", ".3fr", ".iiq", ".x3f"}
+
+
+def _load_raw(source: Path | bytes) -> np.ndarray:
+    """Develop a camera RAW deterministically (LibRaw): camera white balance, sRGB, 8 bits,
+    orientation applied. DNG goes here too: Pillow would only read its embedded preview."""
+    import rawpy
+
+    with rawpy.imread(io.BytesIO(source) if isinstance(source, bytes) else str(source)) as raw:
+        return raw.postprocess(use_camera_wb=True, output_bps=8, output_color=rawpy.ColorSpace.sRGB).copy()
+
+
+def load_upload(data: bytes, filename: str | None = None) -> np.ndarray:
+    """Load uploaded bytes (API entry point). Many RAW formats are TIFF containers that Pillow
+    would open as their small embedded preview, so RAW is tried first unless the name says
+    it is a regular image. Raises ValueError if nothing can read it."""
+    suffix = Path(filename).suffix.lower() if filename else ""
+    if suffix in RAW_EXTENSIONS or suffix not in Image.registered_extensions():
+        try:
+            return _load_raw(data)
+        except Exception:  # not a RAW (rawpy raises LibRawFileUnsupportedError & co)
+            pass
+    try:
+        return load_rgb(Image.open(io.BytesIO(data)))
+    except Exception as e:
+        raise ValueError(f"unreadable image ({filename or 'upload'}): {e}") from e
+
+
 def load_rgb(source: str | Path | Image.Image) -> np.ndarray:
     """Load an image as an HxWx3 uint8 sRGB array, applying EXIF orientation and the ICC profile.
 
     iPhone photos are Display P3 while shared copies (WhatsApp...) are untagged sRGB: reading
     both as raw numbers shifts every tile (real-photo calibration finding)."""
+    if not isinstance(source, Image.Image) and Path(source).suffix.lower() in RAW_EXTENSIONS:
+        return _load_raw(Path(source))
     img = source if isinstance(source, Image.Image) else Image.open(source)
     icc = img.info.get("icc_profile")
-    img = ImageOps.exif_transpose(img).convert("RGB")
+    img = _to_8bit(ImageOps.exif_transpose(img)).convert("RGB")
     if icc:
         try:
             src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
