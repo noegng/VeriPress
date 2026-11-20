@@ -95,7 +95,7 @@
   <section id="tab-sign">
     <div class="card">
       <label class="drop" id="signDrop">
-        <input type="file" accept="image/*" capture="environment" id="signFile">
+        <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" capture="environment" id="signFile">
         <div>📷 <b>Take or choose a photo</b><br><small>Signed and anchored on XRPL Testnet</small></div>
       </label>
       <div class="stage" id="signStage" hidden><img id="signPreview" alt="Image to sign"></div>
@@ -125,7 +125,7 @@
   <section id="tab-verify" hidden>
     <div class="card">
       <label class="drop" id="verifyDrop">
-        <input type="file" accept="image/*" id="verifyFile">
+        <input type="file" accept="image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.raf,.rw2,.orf" id="verifyFile">
         <div>🔍 <b>Choose an image to verify</b><br><small>Even after WhatsApp / screenshots</small></div>
       </label>
       <div class="row">
@@ -208,13 +208,26 @@ function picker(dropId, inputId, onFile) {
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) onFile(f); });
 }
 let signFile = null, verifyFile = null;
+// Browsers cannot render camera RAW (and Chrome cannot render HEIC): if the local preview
+// fails, ask the server to develop it (same pixels the pipeline sees, full resolution).
+function showPreview(img, file) {
+  img.onerror = async () => {
+    img.onerror = null;
+    const fd = new FormData(); fd.append("image", file);
+    try {
+      const r = await fetch("/api/preview", { method: "POST", body: fd });
+      if (r.ok) img.src = URL.createObjectURL(await r.blob());
+    } catch { /* preview is cosmetic; sign/verify still work */ }
+  };
+  img.src = URL.createObjectURL(file);
+}
 picker("signDrop", "signFile", (f) => {
   signFile = f; $("signBtn").disabled = false; $("signResult").hidden = true;
-  $("signPreview").src = URL.createObjectURL(f); $("signStage").hidden = false;
+  showPreview($("signPreview"), f); $("signStage").hidden = false;
 });
 picker("verifyDrop", "verifyFile", (f) => {
   verifyFile = f; $("verifyBtn").disabled = false; $("verifyResult").hidden = true;
-  $("verifyPreview").src = URL.createObjectURL(f);
+  showPreview($("verifyPreview"), f);
 });
 
 async function post(url, form, btn, errEl) {
@@ -239,7 +252,11 @@ $("signBtn").addEventListener("click", async () => {
   if (parent) fd.append("parent", parent);
   const res = await post("/api/sign", fd, $("signBtn"), $("signErr"));
   if (!res) return;
-  $("signWhen").textContent = `Tx ${short(res.tx_hash)} validated on XRPL Testnet`;
+  const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(res.explorer_url || "");
+  $("signWhen").textContent = onChain
+    ? `Tx ${short(res.tx_hash)} validated on XRPL Testnet`
+    : `Tx ${short(res.tx_hash)} — offline demo ledger (not on chain)`;
+  $("signExplorer").hidden = !onChain;
   $("signInfo").innerHTML = rows([
     ["Entry", `<code>${esc(short(res.entry_id))}</code>`],
     ["Signer key", `<code>${esc(short(res.signer))}</code>`],

@@ -21,31 +21,36 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
-from PIL import Image, UnidentifiedImageError
-
+from fastapi.responses import FileResponse, Response
+from PIL import Image
 from . import pipeline, watermark
 from .ledger import CredentialType, FakeLedger, Ledger, XrplLedger
+from .signing import keys_dir
 from .store import Store
-from .tiling import load_rgb
-
-try:  # iPhone photos are HEIC
-    from pillow_heif import register_heif_opener
-
-    register_heif_opener()
-except ImportError:  # pragma: no cover
-    pass
+from .tiling import load_upload
 
 log = logging.getLogger("tileproof.api")
 BACKEND = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).resolve().parent / "static"
-MAX_UPLOAD = 25 * 1024 * 1024
+MAX_UPLOAD = 100 * 1024 * 1024  # camera RAW (CR3, ProRAW DNG…) is often 25-80 MB
 MAX_PIXELS = 40_000_000
 TX_HASH = r"[0-9A-Fa-f]{16,64}"
-ENTRY_ID = re.compile(rf"^{TX_HASH}(-r\d+)?$")
+ENTRY_ID = re.compile(rf"^({TX_HASH})(-r\d+)?$")
 PARENT = re.compile(rf"^{TX_HASH}$")
 # signing.py resolves keys relative to the CWD; pin it so uvicorn works from any directory.
 os.environ.setdefault("TILEPROOF_KEYS", str(BACKEND / "keys"))
+
+
+def norm_entry_id(raw: str | None) -> str | None:
+    """Tx hashes are stored upper-case: a pasted lower-case hash must still match on a
+    case-sensitive (Linux) filesystem. Only the hex part is upper-cased ("-r1" kept)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    m = ENTRY_ID.match(raw)
+    if not m:
+        raise HTTPException(422, "entry_id / tx_hash must be hex (optionally with -r<n>)")
+    return m.group(1).upper() + (m.group(2) or "")
 
 
 def make_ledger() -> Ledger:
@@ -55,9 +60,9 @@ def make_ledger() -> Ledger:
     if kind != "fake":
         raise RuntimeError(f"TILEPROOF_LEDGER must be fake|xrpl, got {kind!r}")
     ledger = FakeLedger()
-    # Offline demo: trust the demo keys like the real registry would.
+    # Offline demo: trust the demo keys like the real registry would. Same folder as signing.py.
     for name, ctype in (("device", CredentialType.CAPTURE_DEVICE), ("ai", CredentialType.AI_GENERATOR)):
-        p = BACKEND / "keys" / f"{name}.json"
+        p = keys_dir() / f"{name}.json"
         if p.exists():
             ledger.issue(json.loads(p.read_text())["public_key"], ctype)
     return ledger
@@ -88,15 +93,17 @@ app.state.store = Store(os.environ.get("TILEPROOF_STORE", BACKEND / "store"))
 async def read_image(upload: UploadFile) -> np.ndarray:
     data = await upload.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "image too large (max 25 MB)")
+        raise HTTPException(413, "image too large (max 100 MB)")
+    # load_upload (Dev A): JPEG/PNG/HEIC/TIFF 16-bit, EXIF + ICC -> sRGB, camera RAW via LibRaw.
+    # Not Image.open first: Pillow reads a RAW as its small embedded preview. RAW development
+    # is CPU-heavy, hence the threadpool. A RAW's size is only known once developed.
     try:
-        img = Image.open(io.BytesIO(data))
-        if img.width * img.height > MAX_PIXELS:
-            raise HTTPException(413, "image too large (max 40 MP)")
-        # EXIF orientation + ICC -> sRGB (iPhone photos are Display P3, WhatsApp re-encodes in sRGB).
-        return load_rgb(img)
-    except (UnidentifiedImageError, OSError, ValueError) as e:
+        rgb = await run_in_threadpool(load_upload, data, upload.filename)
+    except ValueError as e:
         raise HTTPException(400, f"not a readable image: {e}") from e
+    if rgb.shape[0] * rgb.shape[1] > MAX_PIXELS:
+        raise HTTPException(413, "image too large (max 40 MP)")
+    return rgb
 
 
 @app.get("/")
@@ -109,11 +116,25 @@ def health() -> dict:
     return {"ok": True, "ledger": type(app.state.ledger).__name__, "watermark": watermark.enabled()}
 
 
+@app.post("/api/preview")
+async def preview(image: UploadFile = File(...)) -> Response:
+    """Browser-displayable JPEG of an upload the browser cannot render itself (camera RAW,
+    HEIC on Chrome). Full resolution, so redaction boxes drawn on it map 1:1 to pixels."""
+    rgb = await read_image(image)
+
+    def encode() -> bytes:
+        buf = io.BytesIO()
+        Image.fromarray(rgb).save(buf, "JPEG", quality=88)
+        return buf.getvalue()
+
+    return Response(await run_in_threadpool(encode), media_type="image/jpeg")
+
+
 @app.get("/api/files/{name}")
 def files(name: str) -> FileResponse:
-    entry_id = name.removesuffix(".png")
-    if not name.endswith(".png") or not ENTRY_ID.match(entry_id):
+    if not name.endswith(".png") or not ENTRY_ID.match(name.removesuffix(".png")):
         raise HTTPException(404)
+    entry_id = norm_entry_id(name.removesuffix(".png"))
     path = app.state.store.image_path(entry_id)
     if not path.exists():
         raise HTTPException(404)
@@ -141,9 +162,7 @@ async def sign(image: UploadFile = File(...), signer: str = Form("device"), pare
 
 @app.post("/api/verify")
 async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None)):
-    entry_id = (entry_id or "").strip() or None
-    if entry_id and not ENTRY_ID.match(entry_id):
-        raise HTTPException(422, "entry_id / tx_hash must be hex")
+    entry_id = norm_entry_id(entry_id)
     rgb = await read_image(image)
     report, heatmap = await run_in_threadpool(
         pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id
@@ -153,8 +172,9 @@ async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None
 
 @app.post("/api/redact")
 async def redact(image: UploadFile = File(...), entry_id: str = Form(...), boxes: str = Form(...)):
-    if not ENTRY_ID.match(entry_id):
-        raise HTTPException(422, "entry_id must be hex")
+    entry_id = norm_entry_id(entry_id)
+    if entry_id is None:
+        raise HTTPException(422, "entry_id is required")
     try:
         parsed = [tuple(int(v) for v in b) for b in json.loads(boxes)]
         if not parsed or len(parsed) > 64 or any(len(b) != 4 for b in parsed):
