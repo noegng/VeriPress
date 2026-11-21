@@ -378,3 +378,116 @@ def test_lookup_suggests_the_record_a_new_version_derives_from(photo, ledger, st
     assert found[0]["op"] == "capture" and found[0]["timestamp"] == signed.anchor.timestamp
     assert found[0]["image_url"] == f"/api/files/{signed.entry_id}.png"
     assert lookup_records(photo_like(seed=7), store, ledger) == []
+
+
+class CountingLedger:
+    """Counts the ledger reads a verification makes (any attribute access that is a call)."""
+
+    def __init__(self, ledger):
+        self.ledger, self.calls = ledger, []
+
+    def __getattr__(self, name):
+        attr = getattr(self.ledger, name)
+        if not callable(attr):
+            return attr
+
+        def call(*a, **k):
+            self.calls.append((name, a))
+            return attr(*a, **k)
+
+        return call
+
+
+def _with_variants(photo, ledger, store, n=3):
+    signed, png = sign_image(photo, "device", ledger, store)
+    variants = [redact_image(png_to_rgb(png), signed.entry_id, [(32 * k, 0, 32 * k + 64, 64)], store) for k in range(n)]
+    return signed, png, variants
+
+
+def test_verification_stops_at_the_first_perfect_record(photo, ledger, store, monkeypatch):
+    """A signed photo with redacted variants: the original record supports it perfectly (real,
+    nothing changed or redacted), so the variants are not verified one by one."""
+    import veripress.pipeline as pl
+
+    signed, png, _ = _with_variants(photo, ledger, store)
+    seen = []
+    real_verify_entry = pl._verify_entry
+    monkeypatch.setattr(pl, "_verify_entry", lambda rgb, e, *a: (seen.append(e.id), real_verify_entry(rgb, e, *a))[1])
+    report, _ = verify_image(png_to_rgb(png), ledger, store)
+    assert report.verdict == FinalVerdict.REAL and report.entry_id == signed.entry_id
+    assert report.tiles.counts()["redacted"] == 0
+    assert seen == [signed.entry_id]
+
+
+def test_redacted_copy_still_gets_its_own_record_among_the_candidates(photo, ledger, store, monkeypatch):
+    """No candidate is perfect for a redacted copy (it has redacted tiles): all are verified and
+    the variant that matches it wins, as before."""
+    signed, png, variants = _with_variants(photo, ledger, store)
+    rid, red_png = variants[1]
+    report, _ = verify_image(png_to_rgb(red_png), ledger, store)
+    assert report.entry_id == rid and report.verdict == FinalVerdict.REAL
+    assert report.tiles.counts()["redacted"] > 0
+
+
+def test_one_verification_reads_each_ledger_fact_once(photo, ledger, store):
+    """The candidates of an image share their anchor and signer: each ledger read is made once
+    per verification, however many candidates are verified."""
+    signed, png, variants = _with_variants(photo, ledger, store)
+    counting = CountingLedger(ledger)
+    report, _ = verify_image(png_to_rgb(variants[0][1]), counting, store)  # verifies every candidate
+    assert report.verdict == FinalVerdict.REAL
+    reads = [c for c in counting.calls if c[0].startswith(("fetch_", "credential_"))]
+    assert reads and len(reads) == len(set(reads))
+    assert sum(1 for name, _ in reads if name == "fetch_anchor") == 1
+
+
+def test_ledger_read_cache_only_caches_reads():
+    from veripress.pipeline import LedgerReadCache
+
+    class L:
+        n = 0
+
+        def fetch_anchor(self, tx):
+            self.n += 1
+            return tx
+
+        def credential_type(self, pk, t=None):
+            self.n += 1
+            return pk
+
+        def anchor(self, d):
+            self.n += 1
+            return d
+
+    lg = L()
+    c = LedgerReadCache(lg)
+    assert c.fetch_anchor("A") == c.fetch_anchor("A") == "A" and lg.n == 1
+    assert c.credential_type("K", t=5) == "K" and c.credential_type("K", t=5) == "K" and lg.n == 2
+    c.credential_type(["unhashable"]); c.credential_type(["unhashable"])
+    assert lg.n == 4  # unhashable arguments bypass the cache
+    c.anchor("x"); c.anchor("x")
+    assert lg.n == 6  # writes are never cached
+
+
+def test_heatmap_png_only_when_asked(photo, ledger, store):
+    signed, png = sign_image(photo, "device", ledger, store)
+    rgb = png_to_rgb(png)
+    assert verify_image(rgb, ledger, store)[1] is not None
+    report, hm = verify_image(rgb, ledger, store, heatmap_png=False)
+    assert hm is None and report.verdict == FinalVerdict.REAL and report.tiles.statuses
+
+
+def test_valid_metadata_proofs_are_checked_once(monkeypatch):
+    """The ZK verifier (a Node process) runs once per valid (proof, public inputs); an invalid
+    or unverifiable one is checked again each time, and a different input is never confused."""
+    import veripress.pipeline as pl
+
+    calls = []
+    monkeypatch.setattr(pl, "_META_OK", set())
+    monkeypatch.setattr(pl.zk, "verify_meta", lambda proof, public: calls.append(public) or proof.get("ok", False))
+    good, bad = {"ok": True, "pi": [1]}, {"ok": False, "pi": [1]}
+    assert pl._verify_meta(good, ["1", "2"]) and pl._verify_meta(good, ["1", "2"])
+    assert len(calls) == 1
+    assert not pl._verify_meta(bad, ["1", "2"]) and not pl._verify_meta(bad, ["1", "2"])
+    assert len(calls) == 3
+    assert pl._verify_meta(good, ["1", "3"]) and len(calls) == 4

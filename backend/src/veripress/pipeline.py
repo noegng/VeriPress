@@ -378,6 +378,27 @@ def _check_passkey(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledg
 CLOCK_SKEW_S = 3600  # camera clocks drift: a capture day may start up to 1 h after the anchor
 
 
+_META_OK: set[str] = set()  # (proof, public inputs) already verified valid in this process
+
+
+def _verify_meta(proof: dict, public: list) -> bool:
+    """zk.verify_meta, remembered when valid: checking a Groth16 proof is a pure function of the
+    proof and its public inputs (~0.5 s, a Node process), and the candidate records of an image
+    (a record and its redacted variants) carry the same claims. Failures are not remembered (a
+    missing prover is not an invalid proof)."""
+    key = json.dumps([proof, public], sort_keys=True, default=str)
+    if key in _META_OK:
+        return True
+    ok = zk.verify_meta(proof, public)
+    if ok:
+        with _META_LOCK:
+            _META_OK.add(key)
+    return ok
+
+
+_META_LOCK = threading.Lock()
+
+
 def _meta_claims(manifest: Manifest, stored: list[dict], anchored_at: int) -> list[dict]:
     """Verified capture-metadata claims. Each proof must be bound to the commitment in the
     signed manifest; labels come from its public inputs, never from stored text. EXIF is input
@@ -391,7 +412,7 @@ def _meta_claims(manifest: Manifest, stored: list[dict], anchored_at: int) -> li
             kind, label = metadata.describe(public)
         except (TypeError, ValueError):
             continue
-        ok = str(public[0]) == manifest.meta_commitment and zk.verify_meta(c.get("proof", {}), public)
+        ok = str(public[0]) == manifest.meta_commitment and _verify_meta(c.get("proof", {}), public)
         claim = {"kind": kind, "label": label, "proof_ok": bool(ok)}
         if kind == "day" and int(public[1]) > anchored_at + CLOCK_SKEW_S:
             claim.update(proof_ok=False, note="capture day after the anchor time: impossible")
@@ -437,10 +458,11 @@ def _check_anonymous(anchor: Anchor, manifest: Manifest, bundle: dict | None, le
 
 
 def verify_image(
-    rgb: np.ndarray, ledger: Ledger, store: Store, entry_id: str | None = None
+    rgb: np.ndarray, ledger: Ledger, store: Store, entry_id: str | None = None, heatmap_png: bool = True
 ) -> tuple[Report, bytes | None]:
     """Find the entry (entry_id > watermark > phash), check anchor/signature/credential/tiles.
-    Returns the report and the heatmap PNG (None when no entry was found).
+    Returns the report and the heatmap PNG (None when no entry was found, or when not asked for:
+    the page draws the tiles from the report's statuses, the PNG is the size of the photo).
 
     The store is untrusted, and anyone can list records in it (a fake "redacted variant" of a real
     photo, a real record under a forged perceptual hash): without an explicit id, every candidate
@@ -460,13 +482,55 @@ def verify_image(
     if not candidates:
         reason = f"No provenance record for id {entry_id}" if entry_id else "No provenance found for this image"
         return Report(FinalVerdict.UNKNOWN, reason, None, None, None, None, False, None), None
-    best = max((_verify_entry(rgb, e, f, ledger, store) for e, f in candidates), key=_support)
+    # The candidates of one image (a record and its redacted variants) share their anchor and
+    # signer: one read of each ledger fact serves them all.
+    cached = LedgerReadCache(ledger)
+    best = None
+    for e, f in candidates:
+        result = _verify_entry(rgb, e, f, cached, store)
+        if best is None or _support(result) > _support(best):
+            best = result
+        if _support(best) == PERFECT_SUPPORT:  # no other record can support the image better
+            break
     report, manifest = best
-    hm = _png(heatmap(rgb, manifest, report.tiles)) if report.tiles is not None and report.tiles.statuses else None
+    hm = (_png(heatmap(rgb, manifest, report.tiles))
+          if heatmap_png and report.tiles is not None and report.tiles.statuses else None)
     return report, hm
 
 
 MAX_CANDIDATES = 8
+PERFECT_SUPPORT = (2, 0, 0)  # _support of a real/AI verdict with no changed and no redacted tile
+
+
+class LedgerReadCache:
+    """A ledger seen through a read-through cache, for the duration of one verification. The
+    candidate records of an image ask the same questions (anchor, credential, passkey and ML-DSA
+    attestations, registry root, latest ledger); within one verification the answers must agree
+    anyway, so each is read once. Only read methods are cached; calls with unhashable arguments,
+    and everything else, go straight to the ledger."""
+
+    READS = ("fetch_", "credential_", "registry_root_at", "latest_validated", "ledger_close_time")
+
+    def __init__(self, ledger: Ledger):
+        self._ledger = ledger
+        self._memo: dict = {}
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._ledger, name)
+        if not callable(attr) or not name.startswith(self.READS):
+            return attr
+
+        def read(*args, **kwargs):
+            key = (name, args, tuple(sorted(kwargs.items())))
+            try:
+                hash(key)
+            except TypeError:
+                return attr(*args, **kwargs)
+            if key not in self._memo:
+                self._memo[key] = attr(*args, **kwargs)
+            return self._memo[key]
+
+        return read
 
 
 def lookup_records(rgb: np.ndarray, store: Store, ledger: Ledger | None = None, limit: int = 3) -> list[dict]:
@@ -635,14 +699,14 @@ def _verify_entry(rgb: np.ndarray, entry: Entry, found_by: FoundBy, ledger: Ledg
     return report, manifest
 
 
-def verify_stored(entry_id: str, ledger: Ledger, store: Store) -> tuple[Report, bytes | None]:
+def verify_stored(entry_id: str, ledger: Ledger, store: Store, heatmap_png: bool = True) -> tuple[Report, bytes | None]:
     """Verify the published image kept in the store for `entry_id` (public link /v/<tx>).
     Raises KeyError for an unknown entry."""
     path = store.image_path(entry_id)
     if store.get(entry_id) is None or not path.exists():
         raise KeyError(entry_id)
     rgb = np.asarray(Image.open(path).convert("RGB"))
-    return verify_image(rgb, ledger, store, entry_id=entry_id)
+    return verify_image(rgb, ledger, store, entry_id=entry_id, heatmap_png=heatmap_png)
 
 
 def _utc(ts: int) -> str:

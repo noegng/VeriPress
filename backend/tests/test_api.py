@@ -516,3 +516,18 @@ def test_demo_specimens_are_a_closed_list(client):
         assert client.get(f"/api/demo/{name}").status_code == 200
     for bad in ("..%2F..%2Fkeys%2Fdevice.json", "RUNBOOK.md", "nope.png"):
         assert client.get(f"/api/demo/{bad}").status_code == 404
+
+
+def test_verify_heatmap_is_optional_and_off_on_the_public_page(client, signed):
+    """The heatmap PNG is the size of the photo: the page asks heatmap=0 (it draws the tiles from
+    tiles.statuses) and the public page never embeds it. Default unchanged for other clients."""
+    import re
+
+    body, image = signed
+    files = {"image": ("s.png", image, "image/png")}
+    assert client.post("/api/verify", files=files).json()["heatmap_png_b64"]
+    r = client.post("/api/verify", files=files, data={"heatmap": "0"}).json()
+    assert r["heatmap_png_b64"] is None and r["verdict"] == "real" and r["tiles"]["statuses"]
+    page = client.get(f"/v/{body['entry_id']}").text
+    embedded = re.search(r'<script id="report" type="application/json">(.*?)</script>', page, re.S).group(1)
+    assert json.loads(embedded)["heatmap_png_b64"] is None
