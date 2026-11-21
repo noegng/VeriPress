@@ -531,3 +531,55 @@ def test_verify_heatmap_is_optional_and_off_on_the_public_page(client, signed):
     page = client.get(f"/v/{body['entry_id']}").text
     embedded = re.search(r'<script id="report" type="application/json">(.*?)</script>', page, re.S).group(1)
     assert json.loads(embedded)["heatmap_png_b64"] is None
+
+
+def test_a_malformed_store_record_never_gives_a_500(client, signed):
+    """Audit F2: the store is untrusted; one bad record used to make /api/verify (without id)
+    and /api/lookup answer 500."""
+    import shutil
+
+    from veripress import api
+
+    body, image = signed
+    bad = api.app.state.store.root / "0000000000000000"
+    bad.mkdir(parents=True, exist_ok=True)
+    try:
+        (bad / "entry.json").write_text('{"id": "0000000000000000"}')
+        files = {"image": ("s.png", image, "image/png")}
+        r = client.post("/api/verify", files=files, data={"heatmap": "0"})
+        assert r.status_code == 200 and r.json()["verdict"] == "real"
+        r = client.post("/api/lookup", files=files)
+        assert r.status_code == 200 and r.json()["candidates"][0]["entry_id"] == body["entry_id"]
+    finally:
+        shutil.rmtree(bad)
+
+
+def test_the_codec_of_the_upload_decides_the_strict_mode(client, signed):
+    """Audit F4: a PNG at the signed size is judged strictly (a subtle blur plus +1 on every
+    pixel is no longer 'real'); the same pixels as a JPEG, or a resized PNG, keep the
+    recompression tolerance."""
+    from PIL import ImageFilter
+
+    from veripress.api import lossless_codec
+
+    body, image = signed
+    rgb = np.asarray(Image.open(io.BytesIO(image)).convert("RGB"))
+    im = Image.fromarray(rgb)
+    box = (192, 160, 320, 288)
+    im.paste(im.crop(box).filter(ImageFilter.GaussianBlur(0.8)), box[:2])
+    forged = np.clip(np.asarray(im).astype(np.int16) + 1, 0, 255).astype(np.uint8)
+    as_png = png(forged)
+    assert lossless_codec(as_png) and not lossless_codec(jpeg_bytes(rgb)) and not lossless_codec(b"junk")
+    r = client.post("/api/verify", files={"image": ("f.png", as_png, "image/png")},
+                    data={"entry_id": body["entry_id"], "heatmap": "0"}).json()
+    assert r["verdict"] != "real"
+    small = np.asarray(Image.fromarray(rgb).resize((rgb.shape[1] // 2, rgb.shape[0] // 2)))
+    r = client.post("/api/verify", files={"image": ("small.png", png(small), "image/png")},
+                    data={"heatmap": "0"}).json()
+    assert r["verdict"] == "real"
+
+
+def jpeg_bytes(rgb: np.ndarray, quality: int = 85) -> bytes:
+    buf = io.BytesIO()
+    Image.fromarray(rgb).save(buf, "JPEG", quality=quality)
+    return buf.getvalue()

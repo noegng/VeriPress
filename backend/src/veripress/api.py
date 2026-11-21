@@ -420,12 +420,31 @@ async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None
     entry_id = norm_entry_id(entry_id)
     data, rgb = await read_upload(image)
     want = str(heatmap).strip().lower() not in ("0", "false") if heatmap is not None else True
-    report, hm = await run_in_threadpool(
-        pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id, want
-    )
+    try:
+        report, hm = await run_in_threadpool(
+            pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id, want, lossless_codec(data)
+        )
+    except Exception as e:  # noqa: BLE001 — untrusted store or ledger outage: never a bare 500
+        log.exception("VeriPress: verification failed")
+        raise HTTPException(503, "verification temporarily unavailable") from e
     body = report.to_json(hm)
     body["c2pa"] = await run_in_threadpool(c2pa_info, data, body)
     return body
+
+
+LOSSLESS_FORMATS = {"PNG", "TIFF", "BMP", "GIF", "ICO", "PPM"}
+
+
+def lossless_codec(data: bytes) -> bool:
+    """Whether the uploaded file uses a lossless codec (security audit 21/11, F4): decided from
+    the file, which the attacker cannot change without recompressing, not from its pixels."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.format == "WEBP":
+            return bool(img.info.get("lossless"))
+        return img.format in LOSSLESS_FORMATS
+    except Exception:  # noqa: BLE001 — RAW, HEIC or unreadable here: not a lossless copy of the PNG
+        return False
 
 
 @app.post("/api/lookup")
@@ -433,7 +452,11 @@ async def lookup(image: UploadFile = File(...)) -> dict:
     """Certified records an image may derive from (watermark, then perceptual hash), without a full
     verification: the page offers to certify the new file as a version of the record found."""
     _data, rgb = await read_upload(image)
-    found = await run_in_threadpool(pipeline.lookup_records, rgb, app.state.store, app.state.ledger)
+    try:
+        found = await run_in_threadpool(pipeline.lookup_records, rgb, app.state.store, app.state.ledger)
+    except Exception:  # noqa: BLE001 — a suggestion only: never fail the page on it
+        log.exception("VeriPress: lookup failed")
+        found = []
     return {"candidates": found}
 
 

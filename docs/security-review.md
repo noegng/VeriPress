@@ -65,10 +65,27 @@ Attacks that already failed: swapping red and blue, adding text (even 16 px), sh
 
 Calibration after the fix: on the 4 iPhone photos (signed and original, real and simulated WhatsApp copies, found without id), no false edit; largest weighted distance 3.97 for a tolerance of 4.5. Records signed with the first feature set keep verifying with it (the parameters are in the signed manifest).
 
+## External audit (21 Nov): `security-audit-fixes.md`
+
+Five attacks were reported against the verdict logic; each now has a regression test that fails before the fix and passes after (`test_adversarial.py` § 8, `test_api.py`).
+
+| ID | Attack | Before | After | Fix |
+|---|---|---|---|---|
+| F1 | Plant 8 records with the genuine pHash, sorted before it | ⚪ Unknown (genuine never checked) | 🟢 Real | No truncation of the candidates before verification; verification stops only at a perfect record |
+| F2 | Drop one malformed `entry.json` in the store | HTTP 500 on every verification without id, and on `/api/lookup` | Record skipped | Total store parser (bad JSON, missing field, id ≠ folder); a candidate that cannot be read is unknown; the API answers 503, never a bare 500 |
+| F3 | Capture anchored before its key was accredited, then "developed" after accreditation | 🟢 Real through the RAW chain | Not real | A version is verified only if its key was accredited at its anchor time, in every mode |
+| F4 | +1 on every pixel switches off the pixel-based "lossless copy" guess, then a light blur | 🟢 Real | Not real | Strict mode comes from the **codec** of the uploaded file (PNG/TIFF/BMP… at the signed size), passed by the API; the pixel guess remains for tests and the CLI |
+| F5 | Visible dark content painted under a redaction (+1) | 🟢 Real | 🟠 Edited | Same as F4: in a lossless file, redacted tiles must be truly black |
+| F6 | Passkey attestation read in its latest state | Re-attesting could validate an older manifest or invalidate older photos | Read at anchor time | `credential_passkey(pubkey, at_time)` |
+
+Strict mode and the unwatermarked original: a lossless copy of the original capture is not byte-identical to the signed (watermarked) pixels, but reproduces the committed original features to within their rounding (≤ 0.5 step measured on the pitch photo, against ≥ 0.73 for +1 or a light blur). When most tiles that have a distinct original version are reproduced that closely, strict mode keeps them; otherwise it is exact. The pitch photo's original exported as PNG stays 🟢.
+
+Not done (decision for the team): an API rate limit / time budget, now that every candidate is verified (F1); in production the store must not be writable by anyone.
+
 ## Known limits, accepted and stated to the jury
 
-- **Fine details after recompression.** A 🟢 after JPEG vouches for the content at the scale of a tile (~1/40 of the image), its colours and its coarse texture, not for every detail: a blur of radius ≤ 4 px, or blurring something as small as a licence plate, still passes once the image is shared as JPEG. After a platform downscales a 12 MP photo to 1,280 px, those details are gone from authentic copies too. In a lossless copy (PNG), any such edit is detected.
-- **Faint content under a redaction in a lossy copy.** JPEG block noise on a black area reaches the level of faint dark-grey text, so in a lossy copy only the coarse "black" bounds apply. In a lossless copy the area must be truly black.
+- **Fine details after recompression.** A 🟢 after JPEG vouches for the content at the scale of a tile (~1/40 of the image), its colours and its coarse texture, not for every detail: a blur of radius ≤ 4 px, or blurring something as small as a licence plate, still passes once the image is shared as JPEG. After a platform downscales a 12 MP photo to 1,280 px, those details are gone from authentic copies too. In a lossless file (PNG, TIFF… at the signed size, decided from the codec, not from the pixels), any such edit is detected.
+- **Faint content under a redaction in a lossy copy.** JPEG block noise on a black area reaches the level of faint dark-grey text, so in a lossy copy only the coarse "black" bounds apply. In a lossless file the area must be truly black.
 - **EXIF is input.** The ZK claims prove what the signed EXIF says (only impossible future dates are caught). In production the camera writes and signs it.
 - **No retroactive revocation.** Revocation never reaches back, by design. If a device key is stolen at time T and revoked later, photos forged in between stay 🟢. A "compromised since T" revocation (a dated CredentialDelete) is future work.
 - **Registry account history.** Anchors are payments to the registry account, and anyone can send it transactions: verification downloads its whole history (cached a few seconds), so cost grows with every photo, and ~11 XRP of spam (1 million payments) would slow every verification. Production: a separate account to receive the anchors, `DepositAuth` on the registry, an indexer.
@@ -80,7 +97,7 @@ Calibration after the fix: on the 4 iPhone photos (signed and original, real and
 - **`device` circuit**: no domain separation between a leaf hash (`Poseidon(Ax, Ay)`) and an inner node hash. Not exploitable: the depth is fixed at 10 and the key must be a curve point. Planned hardening: `Poseidon(3)` with a domain tag.
 - **Trusted setup**: public phase 1 (PSE, 80 contributions), single local phase-2 contribution. Production: multi-party ceremony, or PLONK / Halo2.
 - **WebAuthn signature counter** not tracked (clone detection); synced Apple passkeys return 0 anyway. Verifiers must list the signing origins in `VERIPRESS_WEBAUTHN_HOSTS`.
-- **Passkey attestation read from the latest `CredentialCreate`**: attesting a new passkey would invalidate older photos signed with the previous one. (The ML-DSA attestation is now read at anchor time; the same change remains to be made for the passkey.)
+- **Passkey attestation**: now read at anchor time, like the ML-DSA one (audit F6).
 - **Public tunnel**: requests would then come from 127.0.0.1, so passkey registration would no longer be restricted to the machine. Do not open a tunnel while registering or attesting a passkey.
 - **Trusted public Testnet node**, without state proofs: a malicious node could lie. Production: own node, or several nodes cross-checked.
 - **Demo keys in clear** in `keys/` (`chmod 600`, never committed). Production: HSM or secure enclave.

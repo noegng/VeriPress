@@ -91,7 +91,7 @@ def test_chain_with_a_passkey_signed_negative_verifies(photo, setup, monkeypatch
         "credential_id": authn.credential_id, "public_key": authn.sec1.hex(),
         "sha256": hashlib.sha256(authn.sec1).hexdigest(), "spki": authn.spki}))
     device = json.loads((keys_dir() / "device.json").read_text())["public_key"]
-    ledger.passkeys[device] = hashlib.sha256(authn.sec1).hexdigest()
+    ledger.passkeys[device] = (0, hashlib.sha256(authn.sec1).hexdigest())
     prep = prepare_passkey_sign(photo, store, ledger=ledger)
     raw, raw_png = complete_passkey_sign(prep["prep_id"], authn.assert_(prep["challenge"]), ledger, store)
     dev, dev_png = sign_image(png_to_rgb(raw_png), "device", ledger, store, parent=raw.entry_id, op="develop")

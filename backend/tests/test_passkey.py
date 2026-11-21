@@ -116,7 +116,7 @@ def test_assertion_from_another_key_is_refused(photo, env):
 
 def test_passkey_not_attested_by_the_registry_is_refused(photo, env):
     ledger, store, authn, device = env
-    ledger.passkeys[device] = "00" * 32  # registry attests another passkey
+    ledger.passkeys[device] = (0, "00" * 32)  # registry attests another passkey
     with pytest.raises(ValueError, match="attest"):
         sign_with_passkey(photo, ledger, store, authn)
 
@@ -125,7 +125,7 @@ def test_attestation_changed_after_signing_makes_it_unknown(photo, env):
     """Verification re-checks the attestation: the passkey must be the one the registry vouches for."""
     ledger, store, authn, device = env
     signed, png = sign_with_passkey(photo, ledger, store, authn)
-    ledger.passkeys[device] = "00" * 32
+    ledger.passkeys[device] = (0, "00" * 32)
     report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
     assert report.verdict == FinalVerdict.UNKNOWN and "passkey" in report.reason.lower()
 
