@@ -1,17 +1,19 @@
 # Pitch script
 
-Spoken script for the jury pitch: **3 min**, then **2 min of questions**. Slides: [`VeriPress-pitch.pptx`](VeriPress-pitch.pptx). The same text is in each slide's speaker notes.
+Spoken script for the jury pitch (8 slides): **3 min**, then **2 min of questions**. Slides: [`VeriPress-pitch.pptx`](VeriPress-pitch.pptx). The same text is in each slide's speaker notes.
 
 Every point shown on a slide is spoken once, in the order it appears. The script is written for about **160 words per minute**. Words in *[square brackets]* are optional: drop them if a rehearsal runs long.
 
 | # | Slide | From | To | Length | Words |
 |---|---|---|---|---|---|
 | 1 | VeriPress | 0:00 | 0:12 | 12 s | ~31 |
-| 2 | Where provenance breaks | 0:12 | 0:26 | 14 s | ~37 |
-| 3 | Who does what, and when | 0:26 | 0:57 | 31 s | ~82 |
-| 4 | The cryptography | 0:57 | 1:35 | 38 s | ~104 |
-| 5 | **Live demo** | 1:35 | 2:50 | **1 min 15** | — |
-| 6 | No single point of trust | 2:50 | 3:00 | 10 s | ~24 |
+| 2 | Where provenance breaks | 0:12 | 0:23 | 11 s | ~30 |
+| 3 | Who does what, and when | 0:23 | 0:36 | 13 s | ~35 |
+| 4 | Signing and certifying a photo | 0:36 | 0:57 | 21 s | ~57 |
+| 5 | Verifying a photo, without the original | 0:57 | 1:18 | 21 s | ~58 |
+| 6 | The cryptography | 1:18 | 1:35 | 17 s | ~49 |
+| 7 | **Live demo** | 1:35 | 2:50 | **1 min 15** | — |
+| 8 | No single point of trust | 2:50 | 3:00 | 10 s | ~24 |
 
 ## Before going on stage
 
@@ -28,35 +30,54 @@ On screen: the app's masthead and home question, *Is this photo what it claims t
 
 > Hi, we're VeriPress. Is this photo what it claims to be? We answer with cryptography: Merkle-committed tiles, a hybrid post-quantum signature, an XRPL anchor. This certificate is real, and survives WhatsApp.
 
-## 2 · Where provenance breaks (0:12 – 0:26)
+## 2 · Where provenance breaks (0:12 – 0:23)
 
 On screen: the question, then three cards: metadata stripped, file hashes break, trust is central.
 
 > Real, edited or AI? Once shared, nobody can tell.
-> WhatsApp strips EXIF and the C2PA manifest.
-> Recompression breaks any file signature, which can't say what changed.
+> WhatsApp strips EXIF and C2PA.
+> Recompression breaks any file signature.
 > And trust is central: Apple's Reference Image hangs on Apple's servers.
 
-## 3 · Who does what, and when (0:26 – 0:57)
+## 3 · Who does what, and when (0:23 – 0:36)
 
-On screen: the swimlane. Rows are actors (registry, device, ledger, store, anyone), columns are phases (setup, sign & anchor, share & verify). Point at each box as you name it.
+On screen: the swimlane. Rows are actors (registry, device, ledger, store, anyone), columns are phases (setup, sign & anchor, verify). Sweep the rows, then the two phases.
 
 > Your Apple diagram, on XRPL.
-> **Setup:** our registry issues each device a Credential with its key hashes; the device accepts it.
-> **Phase one:** the device takes the last ledger hash as T0, watermarks, builds Merkle roots, signs with ML-DSA too, and anchors the digest in a Payment Memo, closed at T1. The disclosure goes to an untrusted store, by CID.
-> **Phase two:** anyone reads the watermark, looks up the record, checks validity at T1, gets a per-tile verdict.
-> Revocation is never retroactive.
+> Our registry gives each device a Credential. The device signs and anchors on the ledger, the disclosure goes to an untrusted store, and anyone verifies.
+> Two phases. Let's zoom in.
 
-## 4 · The cryptography (0:57 – 1:35)
+## 4 · Signing and certifying a photo (0:36 – 0:57)
 
-On screen: four cards: commitments, signatures, zero-knowledge, XRPL trust layer.
+On screen: seven numbered steps; for each, the computation (blue, monospace) and what it proves. Point at the step numbers as you go.
 
-> **Commitments:** two salted Merkle trees per image. Exact, over raw RGB bytes: untouched pixels. Robust, over 21 quantised DCT coefficients per tile: survives JPEG, pinpoints edits. HMAC salts: redacted tiles leak nothing.
-> **Signatures:** Ed25519, the device's XRPL key, plus ML-DSA-87 *[, FIPS 204,]* attested in the Credential so it can't be stripped. Or a Touch ID passkey.
-> **Zero knowledge,** Groth16 on BN254: anonymous signing as a member of a Poseidon registry rooted on XRPL, and claims like "taken on day D, within 10 km", without revealing time or GPS *[: 14,578 and 1,295 constraints]*.
-> **XRPL:** Credentials replace the CA and CRL, validity is read at anchor time, and T0, T1 bound the signing.
+> **Signing,** seven steps.
+> Read the last ledger hash: T0. Embed a random 64-bit watermark id.
+> Cut 32-pixel tiles, commit them in two salted Merkle trees: exact over RGB, robust over DCT coefficients.
+> Hash the canonical manifest, sign it with Ed25519 **and** ML-DSA-87.
+> Anchor it in an XRPL Payment Memo, closed at T1.
+> Publish the disclosure by CID.
 
-## 5 · Live demo (1:35 – 2:50, 1 min 15)
+## 5 · Verifying a photo, without the original (0:57 – 1:18)
+
+On screen: seven numbered steps, ending on the four verdicts in their colours.
+
+> **Verifying** needs no original.
+> Decode the watermark, find the record.
+> The anchored digest must match the stored manifest: the store can't lie.
+> Check both signatures, and the Credential **at T1**.
+> Authenticate the published features against the robust root, then compare each tile: within 4.5 steps, a match; beyond, it lights up.
+> First rule that fires: Real, Edited, AI or Unknown.
+
+## 6 · The cryptography (1:18 – 1:35)
+
+On screen: four annexes: commitments, signatures, zero-knowledge, XRPL trust layer. Annexes A, B and D were just walked through; spend the time on what is new.
+
+> Under the hood: domain-separated leaves, HMAC salts, so redacted tiles leak nothing.
+> The ML-DSA key hash sits in the Credential: the post-quantum half can't be stripped.
+> And zero knowledge, Groth16 on BN254: anonymous signing in a Poseidon registry, and "taken on day D, within 10 km" without revealing GPS.
+
+## 7 · Live demo (1:35 – 2:50, 1 min 15)
 
 On screen: the four steps and their expected verdicts. Switch to the browser on *"Let's see it live."*
 
@@ -70,7 +91,7 @@ On screen: the four steps and their expected verdicts. Switch to the browser on 
 
 If Testnet is slow, verify the pre-signed images instead of signing live. Only if ahead of time: anonymous ZK signing, or a revoked device whose earlier photo stays Real.
 
-## 6 · No single point of trust (2:50 – 3:00)
+## 8 · No single point of trust (2:50 – 3:00)
 
 On screen: Apple's three limits, each with our answer, then our limit and the closing line.
 
