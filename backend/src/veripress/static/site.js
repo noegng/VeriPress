@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function runVerify(file, { tx = S.tx, again = false } = {}) {
   if (!again) { S.vfile = file; S.img = URL.createObjectURL(file); S.retries = 0; S.report = null; S.rdl = null; }
   S.tab = "verify"; S.busy = true; S.err = ""; S.red = false; render();
-  const fd = new FormData(); fd.append("image", S.vfile); if (tx) fd.append("entry_id", tx.trim());
+  const fd = new FormData(); fd.append("image", S.vfile); fd.append("heatmap", "0"); if (tx) fd.append("entry_id", tx.trim());
   try { S.report = await api("/api/verify", { method: "POST", body: fd }); } catch (e) { S.err = e.message; }
   S.busy = false; render();
   if (S.report?.pending && S.retries < 8) { S.retries++; const f = S.vfile; setTimeout(() => S.vfile === f && runVerify(f, { tx, again: true }), 4000); }

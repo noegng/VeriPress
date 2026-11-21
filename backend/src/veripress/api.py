@@ -231,10 +231,10 @@ def files(name: str) -> FileResponse:
     return FileResponse(path, media_type="image/png", filename=f"veripress-{entry_id[:12]}.png")
 
 
-async def _verify_stored(entry_id: str) -> dict:
+async def _verify_stored(entry_id: str, heatmap_png: bool = True) -> dict:
     try:
         report, heatmap = await run_in_threadpool(
-            pipeline.verify_stored, entry_id, app.state.ledger, app.state.store
+            pipeline.verify_stored, entry_id, app.state.ledger, app.state.store, heatmap_png
         )
     except KeyError as e:
         raise HTTPException(404, "unknown entry") from e
@@ -289,7 +289,7 @@ async def public_view(entry_id: str, request: Request) -> HTMLResponse:
     if not ENTRY_ID.match(entry_id):
         raise HTTPException(404)
     entry_id = norm_entry_id(entry_id)
-    r = await _verify_stored(entry_id)
+    r = await _verify_stored(entry_id, heatmap_png=False)  # the page draws the tiles itself
     title, description = _share_text(r)
     image_path = f"/api/files/{entry_id}.png"
     base = str(request.base_url).rstrip("/")
@@ -414,13 +414,16 @@ def wait_for_validation(wait) -> bool:
 
 
 @app.post("/api/verify")
-async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None)):
+async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None), heatmap: str | None = Form(None)):
+    """heatmap=0: no heatmap PNG in the answer (it is the size of the photo; the page draws the
+    tiles from `tiles.statuses`)."""
     entry_id = norm_entry_id(entry_id)
     data, rgb = await read_upload(image)
-    report, heatmap = await run_in_threadpool(
-        pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id
+    want = str(heatmap).strip().lower() not in ("0", "false") if heatmap is not None else True
+    report, hm = await run_in_threadpool(
+        pipeline.verify_image, rgb, app.state.ledger, app.state.store, entry_id, want
     )
-    body = report.to_json(heatmap)
+    body = report.to_json(hm)
     body["c2pa"] = await run_in_threadpool(c2pa_info, data, body)
     return body
 
