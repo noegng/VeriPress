@@ -184,3 +184,33 @@ button{font:inherit;cursor:pointer}
 .rptree rect.path{stroke:#fff;stroke-width:2px;vector-effect:non-scaling-stroke}
 .rptree rect.sib{stroke:#f0c674;stroke-width:2px;stroke-dasharray:3 2;vector-effect:non-scaling-stroke}
 .rptk{display:flex;justify-content:space-between;font:600 10.5px system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#7d7667;margin-top:8px}
+/* phones and narrow windows: one column */
+@media (max-width: 760px) {
+  .vA .wrap{padding:18px 16px 80px}
+  .vA header{flex-wrap:wrap;gap:8px}
+  .vA .brand small{display:block;margin:2px 0 0}
+  .vA nav{flex-wrap:wrap;gap:6px 0}
+  .vA nav button{margin-left:0;margin-right:16px}
+  .vA .pill{margin-left:0;margin-right:10px}
+  .vA .lede{grid-template-columns:1fr;gap:20px;padding:22px 0 18px}
+  .vA .lede h1{font-size:30px}
+  .vA .doc{padding:20px 16px}
+  .vA .dochead{grid-template-columns:1fr auto;gap:10px}
+  .vA .dochead h2{font-size:24px}
+  .vA .seal{width:104px;height:104px}
+  .vA .vfig,.vA .certbody{grid-template-columns:1fr}
+  .vA .vright{padding-top:8px}
+  .vA svg.mtree{min-height:160px}
+  .vA .form{grid-template-columns:1fr}
+  .vA .form .lab{padding:18px 0 0}
+  .vA .form>div{padding:10px 0 18px}
+  .vA .drop.picked{flex-direction:column;align-items:flex-start}
+  .vA .orig{flex-direction:column}
+  .vA dl{grid-template-columns:1fr;gap:2px}
+  .vA dt{margin-top:8px}
+  .vA td.r{width:64px}
+  .rpin{height:auto;padding:16px}
+  .rphead h2{font-size:24px}
+  .rpgrid{grid-template-columns:1fr}
+  .rpgrid .rpleft .ovl img{max-height:50vh;max-width:100%}
+}
