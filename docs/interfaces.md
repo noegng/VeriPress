@@ -165,7 +165,7 @@ Multipart: `image`, `signer` = `device` | `ai`, optional `parent` (tx hash → `
 
 ### `POST /api/verify`
 
-Multipart: `image`, optional `entry_id`.
+Multipart: `image`, optional `entry_id`, optional `heatmap` (`0` = no `heatmap_png_b64` in the answer: it is a PNG the size of the photo; the page sends `0` and draws the tiles from `tiles.statuses`, and `/v/<id>` never embeds it).
 
 ```json
 {
