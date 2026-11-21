@@ -56,6 +56,8 @@ Assets are re-signed on Testnet with `uv run python -m veripress.cli prepare-dem
 
 ## Pitch outline (≈ 3–5 min)
 
+Final deck and spoken script (3 min, demo 1 min 15): [`VeriPress-pitch.pptx`](VeriPress-pitch.pptx), [`pitch-script.md`](pitch-script.md).
+
 1. Hook: a real, an edited and an AI image: "which one is real?"
 2. Problem: provenance dies when metadata is stripped; trust is centralised; a hash breaks on recompression.
 3. Solution in four steps: sign, tile, anchor on XRPL, watermark.
