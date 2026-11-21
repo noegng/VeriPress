@@ -6,12 +6,12 @@ Every point shown on a slide is spoken once, in the order it appears. The script
 
 | # | Slide | From | To | Length | Words |
 |---|---|---|---|---|---|
-| 1 | VeriPress | 0:00 | 0:13 | 13 s | ~34 |
-| 2 | Where provenance breaks | 0:13 | 0:27 | 14 s | ~37 |
-| 3 | Who does what, and when | 0:27 | 0:58 | 31 s | ~82 |
-| 4 | The cryptography | 0:58 | 1:36 | 38 s | ~104 |
-| 5 | **Live demo** | 1:36 | 2:51 | **1 min 15** | — |
-| 6 | No single point of trust | 2:51 | 3:00 | 9 s | ~24 |
+| 1 | VeriPress | 0:00 | 0:12 | 12 s | ~31 |
+| 2 | Where provenance breaks | 0:12 | 0:26 | 14 s | ~37 |
+| 3 | Who does what, and when | 0:26 | 0:57 | 31 s | ~82 |
+| 4 | The cryptography | 0:57 | 1:35 | 38 s | ~104 |
+| 5 | **Live demo** | 1:35 | 2:50 | **1 min 15** | — |
+| 6 | No single point of trust | 2:50 | 3:00 | 10 s | ~24 |
 
 ## Before going on stage
 
@@ -22,13 +22,13 @@ Every point shown on a slide is spoken once, in the order it appears. The script
 
 ---
 
-## 1 · VeriPress (0:00 – 0:13)
+## 1 · VeriPress (0:00 – 0:12)
 
-On screen: the tagline, the five primitives (SHA-256 Merkle trees, Ed25519 + ML-DSA-87, Groth16 · BN254, Poseidon, XRPL Credentials) and, on the right, the real proof of one photo anchored on Testnet: tiles, both Merkle roots, the SHA-256 digest, T0, the hybrid signature, the transaction, the verdict.
+On screen: the app's masthead and home question, *Is this photo what it claims to be?*, the five-line lede, and the certificate of one real record anchored on Testnet (transaction, signers, SHA-256 digest, both Merkle roots, tiles, T0) with the app's **Real** seal.
 
-> Hi, we're VeriPress. This is a real proof from XRPL Testnet: tiles committed in Merkle trees, a SHA-256 digest, a hybrid Ed25519 and ML-DSA signature, anchored in one transaction. And it survives WhatsApp.
+> Hi, we're VeriPress. Is this photo what it claims to be? We answer with cryptography: Merkle-committed tiles, a hybrid post-quantum signature, an XRPL anchor. This certificate is real, and survives WhatsApp.
 
-## 2 · Where provenance breaks (0:13 – 0:27)
+## 2 · Where provenance breaks (0:12 – 0:26)
 
 On screen: the question, then three cards: metadata stripped, file hashes break, trust is central.
 
@@ -37,7 +37,7 @@ On screen: the question, then three cards: metadata stripped, file hashes break,
 > Recompression breaks any file signature, which can't say what changed.
 > And trust is central: Apple's Reference Image hangs on Apple's servers.
 
-## 3 · Who does what, and when (0:27 – 0:58)
+## 3 · Who does what, and when (0:26 – 0:57)
 
 On screen: the swimlane. Rows are actors (registry, device, ledger, store, anyone), columns are phases (setup, sign & anchor, share & verify). Point at each box as you name it.
 
@@ -47,7 +47,7 @@ On screen: the swimlane. Rows are actors (registry, device, ledger, store, anyon
 > **Phase two:** anyone reads the watermark, looks up the record, checks validity at T1, gets a per-tile verdict.
 > Revocation is never retroactive.
 
-## 4 · The cryptography (0:58 – 1:36)
+## 4 · The cryptography (0:57 – 1:35)
 
 On screen: four cards: commitments, signatures, zero-knowledge, XRPL trust layer.
 
@@ -56,21 +56,21 @@ On screen: four cards: commitments, signatures, zero-knowledge, XRPL trust layer
 > **Zero knowledge,** Groth16 on BN254: anonymous signing as a member of a Poseidon registry rooted on XRPL, and claims like "taken on day D, within 10 km", without revealing time or GPS *[: 14,578 and 1,295 constraints]*.
 > **XRPL:** Credentials replace the CA and CRL, validity is read at anchor time, and T0, T1 bound the signing.
 
-## 5 · Live demo (1:36 – 2:51, 1 min 15)
+## 5 · Live demo (1:35 – 2:50, 1 min 15)
 
 On screen: the four steps and their expected verdicts. Switch to the browser on *"Let's see it live."*
 
 | Time | Action | Say |
 |---|---|---|
-| 0:00 – 0:20 | **Sign** tab: drop the photo, *Sign & anchor on XRPL*. | "This is a real XRPL Testnet transaction… **Real**. Here's the chain of evidence: accredited device, post-quantum signature, signed between these two ledger times." |
-| 0:20 – 0:40 | **Verify** tab: the copy that went through WhatsApp. | "Same photo after WhatsApp: no metadata, recompressed. VeriPress finds it through the invisible watermark: **still real**." |
+| 0:00 – 0:20 | **Certify a photo**: drop it, sign and anchor on XRPL. | "This is a real XRPL Testnet transaction… **Certified**, with its seal." |
+| 0:20 – 0:40 | **Examine a photo**: the copy that went through WhatsApp. | "Same photo after WhatsApp: no metadata, recompressed. VeriPress finds it through the invisible watermark: **still real**." |
 | 0:40 – 0:55 | The retouched copy. | "Here we changed one detail. **Edited**, and the heatmap shows exactly which tiles." |
 | 0:55 – 1:10 | The AI image. | "And an image from our declared AI generator: honestly labelled **AI-generated**, by its own signer." |
 | 1:10 – 1:15 | Back to the slides. | "So, why a ledger?" |
 
 If Testnet is slow, verify the pre-signed images instead of signing live. Only if ahead of time: anonymous ZK signing, or a revoked device whose earlier photo stays Real.
 
-## 6 · No single point of trust (2:51 – 3:00)
+## 6 · No single point of trust (2:50 – 3:00)
 
 On screen: Apple's three limits, each with our answer, then our limit and the closing line.
 
