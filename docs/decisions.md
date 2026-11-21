@@ -15,7 +15,7 @@ Record of the team's design sessions (structured question-and-answer sessions wi
 | 5 | Anchor format | Payment of 1 drop + Memo `veripress/v1` | Kept, extended for the anonymous, passkey and batch modes |
 | 6 | Front end | A single page served by FastAPI; Merkle tree ↔ image views as an option | Done, views included |
 | 7 | WhatsApp during the demo | Image prepared in advance, plus a backup video: the venue network is unreliable | Kept |
-| 8 | Where to use test-driven development | Only on Merkle trees / redaction proofs and the final verdict rules | Kept; ~290 tests in the end |
+| 8 | Where to use test-driven development | Only on Merkle trees / redaction proofs and the final verdict rules | Kept; ~300 tests in the end |
 | 9 | Work split | Dev A: trust and verification (signature, pipeline, verdict, store, watermark). Dev B: registry and interface (XRPL, API, page, visualisations) | Kept |
 | 10 | Contracts before coding | `ledger.py` with a `FakeLedger`, and `interfaces.md`, written before splitting up | Kept |
 | 11 | Git | Branches `dev-a/*` / `dev-b/*`, each developer writes only to their own files | Kept; pull requests from Friday afternoon |

@@ -295,4 +295,4 @@ Phase 1 comes from the public *Perpetual Powers of Tau* ceremony (PSE, 80 contri
 - **ZK:** circom 2, `snarkjs`, `circomlib` (Node ≥ 20). Compiled circuits and verification keys are committed: the backend runs without circom.
 - **Front end:** a single HTML page served by FastAPI (vanilla JS, canvas, WebAuthn).
 - **Network:** XRPL Testnet.
-- **Tests:** 288 automated tests (`cd backend && uv run python -m pytest`), including dedicated security tests; the XRPL tests run against Testnet with `VERIPRESS_NET=1`.
+- **Tests:** 303 automated tests (`cd backend && uv run python -m pytest`), including dedicated security tests; the XRPL tests run against Testnet with `VERIPRESS_NET=1`.
