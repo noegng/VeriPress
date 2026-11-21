@@ -483,7 +483,7 @@ class XrplLedger:
             return None
         return _revoked_at(self._intervals(subject).values(), int(time.time()))
 
-    # --- Phase 2: implemented by a later Dev B feature PR (task 6 in tasks-dev-b.md) ---
+    # --- Phase 2: implemented by later Dev B feature PRs ---
 
     def _credential_uri(self, pubkey: str, ctype: CredentialType, at_time: int | None = None) -> str | None:
         """Hex URI of the `ctype` credential the registry created for this key's account: the

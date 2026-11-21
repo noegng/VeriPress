@@ -5,8 +5,8 @@ Deux devs, deux agents Claude, en parallèle. Le but de ces règles est de ne ja
 
 ## 1. Qui fait quoi
 
-- **Dev A, « confiance et vérification »** : signature, pipeline, verdict final, store, filigrane. Tâches : [`tasks-dev-a.md`](tasks-dev-a.md)
-- **Dev B, « registre et interface »** : XRPL Testnet, API FastAPI, page web, visualisations. Tâches : [`tasks-dev-b.md`](tasks-dev-b.md)
+- **Dev A, « confiance et vérification »** : signature, pipeline, verdict final, store, filigrane.
+- **Dev B, « registre et interface »** : XRPL Testnet, API FastAPI, page web, visualisations.
 
 ## 2. Propriété des fichiers
 
