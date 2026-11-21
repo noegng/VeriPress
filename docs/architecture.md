@@ -31,7 +31,7 @@ How VeriPress signs an image, anchors it on the XRP Ledger, and later verifies a
 
 | Component | Where | Role |
 |---|---|---|
-| Web page | `static/index.html`, `static/view.html` | Examine / certify tabs; tiles, drift and Merkle tree drawn on the photo; in-browser proof replay (WebCrypto + a public XRPL node); redaction; passkey; public link page |
+| Web page | `static/index.html`, `static/view.html`, shared `static/site.css` + `site.js` | Examine / certify tabs; tiles, drift and Merkle tree drawn on the photo; in-browser proof replay (WebCrypto + a public XRPL node); redaction; passkey; public link page |
 | API | `api.py` (FastAPI) | HTTP routes; calls only `pipeline.*` |
 | Pipeline | `pipeline.py` | Sign, verify, redact; final verdict rules |
 | Commitment | `commitment.py`, `merkle.py`, `features.py`, `tiling.py` | Tiles, two Merkle trees, tile comparison |

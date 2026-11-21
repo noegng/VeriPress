@@ -469,6 +469,32 @@ def verify_image(
 MAX_CANDIDATES = 8
 
 
+def lookup_records(rgb: np.ndarray, store: Store, ledger: Ledger | None = None, limit: int = 3) -> list[dict]:
+    """Records this image may derive from, found as verify_image finds them (watermark, then
+    perceptual hash) but without verifying anything: a suggestion for the signer of a new version
+    (version chain), never a verdict. A planted record could be suggested; the signer confirms the
+    parent, and the chain is checked when the new version is verified."""
+    ph = phash(rgb)
+    wm = watermark.extract(rgb) if watermark.enabled() else None
+    found = [(e, "watermark") for e in (store.find_all_by_watermark(wm.hex(), ph) if wm else [])]
+    seen = {e.id for e, _ in found}
+    found += [(e, "phash") for e in store.nearest_all(ph) if e.id not in seen]
+    out: list[dict] = []
+    for entry, how in found:
+        if entry is None or any(o["tx_hash"] == entry.tx_hash for o in out):
+            continue
+        anchor = ledger.fetch_anchor(entry.tx_hash) if ledger is not None else None
+        out.append({
+            "entry_id": entry.id, "tx_hash": entry.tx_hash, "found_by": how, "op": entry.manifest.op,
+            "anonymous": entry.manifest.anonymous, "signer": entry.manifest.signer,
+            "timestamp": anchor.timestamp if anchor is not None else None,
+            "image_url": f"/api/files/{entry.id}.png",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _support(result: tuple["Report", Manifest | None]) -> tuple:
     """How well a candidate record supports the image: verdict first, then fewer changed tiles."""
     r = result[0]

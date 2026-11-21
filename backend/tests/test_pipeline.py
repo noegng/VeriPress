@@ -362,3 +362,19 @@ def test_fast_anchoring_gives_a_pending_verdict_until_validated(photo, ledger, s
     ledger.validate(signed.entry_id)
     report, _ = verify_image(png_to_rgb(png), ledger, store, entry_id=signed.entry_id)
     assert not report.pending and not report.reason.startswith("Anchor pending")
+
+
+def test_lookup_suggests_the_record_a_new_version_derives_from(photo, ledger, store):
+    """lookup_records: what the page offers as the parent of a new version. A shared copy of a
+    signed photo finds its record (with the anchor time); an unrelated image finds nothing."""
+    from conftest import photo_like
+
+    from veripress.pipeline import lookup_records
+
+    signed, png = sign_image(photo, "device", ledger, store)
+    shared = jpeg(png_to_rgb(png), 70)
+    found = lookup_records(shared, store, ledger)
+    assert found and found[0]["tx_hash"] == signed.anchor.tx_hash
+    assert found[0]["op"] == "capture" and found[0]["timestamp"] == signed.anchor.timestamp
+    assert found[0]["image_url"] == f"/api/files/{signed.entry_id}.png"
+    assert lookup_records(photo_like(seed=7), store, ledger) == []

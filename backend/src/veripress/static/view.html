@@ -1,4 +1,7 @@
-<!doctype html>
+<!DOCTYPE html>
+<!-- Public provenance record (/v/<id>): rendered by the server (social crawlers do not run
+     JavaScript, so the Open Graph tags already hold the verdict), then drawn by site.js from the
+     embedded report: same report, viewer and proof replay as the app. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -15,121 +18,12 @@
 <meta name="twitter:title" content="__TITLE__">
 <meta name="twitter:description" content="__DESCRIPTION__">
 <meta name="twitter:image" content="__IMAGE_URL__">
-<link rel="stylesheet" href="/assets/proofs.css">
-<style>
-  :root {
-    --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d22; --muted: #6a6f7a; --line: #e2e0d8;
-    --accent: #1f5eff; --accent-btn: #1f5eff; --real: #157347; --edited: #c2410c; --ai: #1864ab; --unknown: #5c636a;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #121318; --card: #1b1d24; --ink: #eceef2; --muted: #9aa0ab; --line: #2c2f38; --accent: #5b8cff; --accent-btn: #3563d9; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
-  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
-  h1 { font-size: 24px; margin: 0; letter-spacing: -0.02em; } h1 a { color: inherit; text-decoration: none; } h1 span { color: var(--accent); }
-  .tag { color: var(--muted); font-size: 14px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
-  .badge { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 12px; color: #fff; }
-  .badge .dot { font-size: 40px; line-height: 1; } .badge strong { font-size: 24px; display: block; } .badge small { opacity: .92; }
-  .v-real { background: var(--real); } .v-edited { background: var(--edited); } .v-ai { background: var(--ai); } .v-unknown { background: var(--unknown); }
-  .stage { position: relative; margin-top: 12px; border-radius: 10px; overflow: hidden; background: #000; line-height: 0; }
-  .stage img { width: 100%; height: auto; display: block; }
-  .stage img.overlay { position: absolute; inset: 0; height: 100%; image-rendering: pixelated; }
-  h2 { font-size: 15px; margin: 18px 0 8px; } h2 small { color: var(--muted); font-weight: 400; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; font-size: 14px; }
-  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
-  code { font: 13px ui-monospace, monospace; } a { color: var(--accent); }
-  ul.claims, ol.history { list-style: none; padding: 0; margin: 8px 0 0; font-size: 15px; }
-  ul.claims li { padding: 6px 0; border-bottom: 1px solid var(--line); } ul.claims li:last-child { border-bottom: 0; }
-  ol.history { border-left: 2px solid var(--line); font-size: 14px; }
-  ol.history li { position: relative; padding: 4px 0 8px 16px; }
-  ol.history li::before { content: ""; position: absolute; left: -6px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
-  ol.history li.bad::before { background: #c92a2a; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
-  .btn { border: 0; background: var(--accent-btn); color: #fff; font: inherit; font-weight: 600; padding: 11px 16px; border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-block; }
-  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
-  main { max-width: 1080px; }
-  .grid { display: grid; gap: 22px; }
-  .grid .stage { margin-top: 0; align-self: start; }
-  .reason { margin: 0 0 14px; font-size: 15px; color: var(--muted); }
-  details.tech { margin-top: 8px; font-size: 14px; } details.tech > summary { cursor: pointer; color: var(--muted); }
-  .btn .vp-i { width: 18px; height: 18px; vertical-align: -3px; }
-  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  @media (min-width: 900px) { .grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); } }
-</style>
+<link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
-<main>
-  <header>
-    <h1><a href="/">Veri<span>Press</span></a></h1>
-    <span class="tag">Public provenance record · read-only</span>
-  </header>
-  <div class="card">
-    <div class="grid">
-      <div class="stage">
-        <img id="photo" src="__IMAGE_PATH__" alt="Published image">
-        <img class="overlay" id="heatmap" alt="" hidden>
-        <div id="stamp"></div>
-      </div>
-      <div>
-        <p class="reason" id="reason"></p>
-        <div id="chain"></div>
-        <details class="tech"><summary>Technical details</summary><dl id="info"></dl></details>
-        <div id="historyBox" hidden>
-          <h2>Version history</h2>
-          <ol class="history" id="history"></ol>
-        </div>
-      </div>
-    </div>
-    <div class="row">
-      <button class="btn" id="copy" hidden><svg class="vp-i" aria-hidden="true"><use href="#vp-link"/></svg> Copy link</button>
-      <a class="btn ghost" href="__IMAGE_PATH__" download><svg class="vp-i" aria-hidden="true"><use href="#vp-download"/></svg> Download image</a>
-      <a class="btn ghost" href="/">Verify your own image</a>
-    </div>
-    <p class="note">This page re-verifies the stored image against its XRPL anchor each time it is opened.</p>
-  </div>
-</main>
+<div id="app" data-img="__IMAGE_PATH__"></div>
+<input type="file" id="file" hidden>
 <script id="report" type="application/json">__REPORT_JSON__</script>
-<script src="/assets/proofs.js"></script>
-<script>
-const $ = (id) => document.getElementById(id);
-const r = JSON.parse($("report").textContent);
-const { esc, short } = VeriProof;
-VeriProof.sprite();
-function fmtTime(ts) { return ts == null ? "—" : new Date(ts * 1000).toLocaleString(); }
-const onChain = /^https:\/\/testnet\.xrpl\.org\//.test(r.anchor?.explorer_url || "");
-function txLink(hash, url) {
-  const code = `<code>${esc(short(hash))}</code>`;
-  return onChain ? `<a href="${esc(VeriProof.safeUrl(url || "https://testnet.xrpl.org/transactions/" + hash))}" target="_blank" rel="noopener">${code}${VeriProof.icon("external", "vp-i vp-ext")}</a>` : code;
-}
-// The verdict stamped on the photo, then each guarantee as a link of the chain (proofs.js).
-$("stamp").innerHTML = VeriProof.stamp(r);
-$("chain").innerHTML = VeriProof.chain(r, { onchain: onChain });
-$("reason").textContent = r.reason || "";
-// Fast anchoring: provisional verdict, reload until the anchor is validated on the ledger.
-if (r.pending) setTimeout(() => location.reload(), 5000);
-if (r.heatmap_png_b64) { $("heatmap").src = "data:image/png;base64," + r.heatmap_png_b64; $("heatmap").hidden = false; }
-const a = r.anchor;
-$("info").innerHTML = [
-  ["Transaction", a && txLink(a.tx_hash, a.explorer_url)],
-  ["Anchored", a && esc(fmtTime(a.timestamp))],
-  ["Signer key", a && (a.signer ? `<code>${esc(short(a.signer))}</code>` : r.anonymous ? "hidden (anonymous)" : null)],
-  ["Registry root", r.zk && `<code>${esc(short(r.zk.registry_root))}</code>`],
-  ["Disclosure CID", r.disclosure_cid && `<code title="${esc(r.disclosure_cid)}">${esc(short(r.disclosure_cid))}</code>`],
-  ["Tiles", r.tiles && esc(`${r.tiles.verdict} · ${r.tiles.grid.cols} × ${r.tiles.grid.rows} tiles of ${r.tiles.grid.tile}px`)],
-].filter(([, v]) => v).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
-const OPS = { capture: "Captured", edit: "Signed edit", develop: "Developed from the signed RAW", ai_generate: "AI-generated" };
-const hist = r.history || [];
-$("historyBox").hidden = hist.length < 2;
-$("history").innerHTML = hist.map((h) => `<li class="${h.verified ? "" : "bad"}">${esc(OPS[h.op] || h.op || "unknown version")} · ${esc(fmtTime(h.timestamp))} · ${txLink(h.tx_hash)}${h.verified ? "" : " · not verified"}</li>`).join("");
-if (navigator.clipboard) {
-  $("copy").hidden = false;
-  $("copy").addEventListener("click", async () => { await navigator.clipboard.writeText(location.href); $("copy").lastChild.textContent = " Link copied"; });
-}
-</script>
+<script src="/assets/site.js"></script>
 </body>
 </html>
