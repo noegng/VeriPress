@@ -148,7 +148,7 @@ def index() -> FileResponse:
 
 # Shared by the app and the public link (verdict stamp + chain of evidence). A closed list:
 # nothing else under static/ is served by name.
-ASSETS = {"proofs.js": "text/javascript", "proofs.css": "text/css"}
+ASSETS = {"site.js": "text/javascript", "site.css": "text/css"}
 
 
 @app.get("/assets/{name}")
@@ -423,6 +423,15 @@ async def verify(image: UploadFile = File(...), entry_id: str | None = Form(None
     body = report.to_json(heatmap)
     body["c2pa"] = await run_in_threadpool(c2pa_info, data, body)
     return body
+
+
+@app.post("/api/lookup")
+async def lookup(image: UploadFile = File(...)) -> dict:
+    """Certified records an image may derive from (watermark, then perceptual hash), without a full
+    verification: the page offers to certify the new file as a version of the record found."""
+    _data, rgb = await read_upload(image)
+    found = await run_in_threadpool(pipeline.lookup_records, rgb, app.state.store, app.state.ledger)
+    return {"candidates": found}
 
 
 def c2pa_info(data: bytes, report: dict) -> dict | None:

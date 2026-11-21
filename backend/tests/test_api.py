@@ -473,14 +473,14 @@ def test_batch_limits(client):
     assert r.status_code == 422
 
 
-def test_shared_assets_are_a_closed_list(client):
-    js = client.get("/assets/proofs.js")
-    assert js.status_code == 200 and "javascript" in js.headers["content-type"] and "VeriProof" in js.text
-    assert client.get("/assets/proofs.css").status_code == 200
-    for bad in ("index.html", "view.html", "..%2Fapi.py", "nope.js"):
+def test_shared_assets_are_a_closed_list(client, signed):
+    js = client.get("/assets/site.js")
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"] and "/api/verify" in js.text
+    assert client.get("/assets/site.css").status_code == 200
+    for bad in ("index.html", "view.html", "proofs.js", "..%2Fapi.py", "nope.js"):
         assert client.get(f"/assets/{bad}").status_code == 404
-    page = client.get("/").text
-    assert "/api/verify" in page and "/api/sign" in page and "/api/proof/" in page
+    for page in (client.get("/").text, client.get(f"/v/{signed[0]['entry_id']}").text):  # app and public page share them
+        assert "/assets/site.js" in page and "/assets/site.css" in page
 
 
 def test_proof_material_lets_the_browser_recompute_the_root(client, signed):

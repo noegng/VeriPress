@@ -130,6 +130,7 @@ Script options: `--fresh` (new accounts), `--revoke device|ai`, `--reissue devic
 | `POST /api/sign/passkey/prepare`, `…/complete` | Two-step passkey signing |
 | `POST /api/passkey/register`, `GET /api/passkey` | Register a passkey candidate (localhost only) / read it |
 | `POST /api/verify` | Verify an uploaded image |
+| `POST /api/lookup` | Certified records an upload may derive from (watermark, then perceptual hash), no verification: `{candidates: [{entry_id, tx_hash, found_by, op, anonymous, signer, timestamp, image_url}]}`. The page offers the first one as the parent of a new version |
 | `POST /api/redact` | Create a redacted variant |
 | `GET /api/anchor/{tx_hash}` | Anchor status `{tx_hash, validated, timestamp, explorer_url}` (polled after fast anchoring) |
 | `GET /api/entry/{entry_id}` | `/api/verify` JSON computed on the stored image |
