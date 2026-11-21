@@ -184,7 +184,9 @@ function verdictOf(r) {
   const t = r.tiles?.counts || {};
   return {
     real: { word: "Authentic", line: t.redacted ? `Taken by an accredited device. ${t.redacted} tiles were redacted on purpose; everything else is untouched.` : t.robust ? "Taken by an accredited device. Recompressed when shared, content unchanged." : "Taken by an accredited device. Not a pixel changed since." },
-    edited: { word: "Edited", line: `${t.changed} of ${(t.exact || 0) + (t.robust || 0) + (t.changed || 0) + (t.redacted || 0)} areas were changed after it was signed.` },
+    edited: t.changed || (r.history || []).length < 2
+      ? { word: "Edited", line: `${t.changed} of ${(t.exact || 0) + (t.robust || 0) + (t.changed || 0) + (t.redacted || 0)} areas were changed after it was signed.` }
+      : { word: "Edited", line: "A declared edit of a certified photo: signed as a new version, its history leads back to the original." },
     ai: { word: "AI-generated", line: "Declared at creation by an accredited AI generator." },
     unknown: { word: "Unverified", line: r.reason },
   }[r.verdict] || { word: r.verdict, line: r.reason };
