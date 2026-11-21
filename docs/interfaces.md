@@ -63,7 +63,7 @@ class Ledger(Protocol):
     def credential_type(self, pubkey, at_time=None) -> CredentialType | None: ...  # valid at that instant
                                                                  # (the pipeline always passes the anchor time)
     def credential_revoked_at(self, pubkey) -> int | None: ...   # unix time of the CredentialDelete
-    def credential_passkey(self, pubkey) -> str | None: ...      # SHA-256 hex of the attested P-256 key
+    def credential_passkey(self, pubkey, at_time=None) -> str | None: ...  # SHA-256 hex of the P-256 key attested at at_time (None = latest)
     def credential_pq(self, pubkey, at_time=None) -> str | None: ...  # SHA-256 hex of the ML-DSA-87 key attested at that instant
     def registry_root_at(self, at_time) -> str | None: ...       # anonymous registry root in force
     def latest_validated(self) -> tuple[int, str, int]: ...      # (index, hash, close_time): T0
@@ -184,8 +184,8 @@ Multipart: `image`, optional `entry_id`, optional `heatmap` (`0` = no `heatmap_p
     "distances": [1.2, "…"]
   },
   "history": [
-    {"tx_hash": "C3D4…", "op": "edit", "timestamp": 1795000100, "verified": true},
-    {"tx_hash": "A1B2…", "op": "capture", "timestamp": 1795000000, "verified": true}
+    {"tx_hash": "C3D4…", "op": "edit", "timestamp": 1795000100, "verified": true, "credential": "CAPTURE_DEVICE"},
+    {"tx_hash": "A1B2…", "op": "capture", "timestamp": 1795000000, "verified": true, "credential": "CAPTURE_DEVICE"}
   ],
   "anonymous": false,
   "zk": null,
