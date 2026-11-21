@@ -4,6 +4,8 @@
 
 Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track 1: Advanced cryptography for blockchain**.
 
+▶ **Demo video (4 min, live on XRPL Testnet): https://youtu.be/1zFHc1JARNs**
+
 ---
 
 ## The problem
@@ -66,7 +68,7 @@ Designed to **complement** C2PA, not replace it: the published PNG also carries 
 ```bash
 cd zk && npm ci                                   # once (ZK tool)
 cd backend
-uv run python -m pytest                           # 288 tests
+uv run python -m pytest                           # 303 tests (+9 skipped: real-Testnet tests, VERIPRESS_NET=1)
 uv run python -m veripress.cli demo photo.jpg -o out/   # demo scenarios, offline
 uv run python scripts/setup_testnet.py            # keys, XRPL Testnet accounts, Credentials, registry
 VERIPRESS_LEDGER=xrpl uv run uvicorn veripress.api:app  # → http://localhost:8000
