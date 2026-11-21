@@ -33,6 +33,14 @@ REDACTED_MAX_P95 = 48
 # only the bounds above apply there.)
 REDACTED_MAX_LOSSLESS_P99 = 8
 LOSSLESS_EXACT_SHARE = 0.5  # textured tiles still byte-identical: the copy is lossless
+# A lossless copy of the UNWATERMARKED original capture is not byte-identical to the signed
+# (watermarked) pixels, but its features equal the committed original ones to within their
+# rounding (<= 0.5 step on real photos; +1 on every pixel or a light blur measured >= 0.73,
+# audit 21/11 F4). When most tiles that have a distinct original version reproduce it that
+# closely, the file is that original: strict mode keeps tiles within STRICT_TOL. Otherwise
+# (the published, watermarked image) strict mode is exact, as before.
+STRICT_TOL = 0.55
+ORIGINAL_COPY_SHARE = 0.5
 
 
 # ---------------------------------------------------------------- data model
@@ -216,8 +224,14 @@ class VerifyResult:
         return out
 
 
-def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> VerifyResult:
+def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure, lossless: bool | None = None) -> VerifyResult:
+    """lossless: whether the received FILE uses a lossless codec (PNG, TIFF…), as the API knows
+    from its bytes. A lossless file at the signed size has no recompression noise to forgive, so
+    a tile that is merely "close" was edited (strict mode). None (tests, CLI without codec info):
+    guessed from the pixels, as before; that guess can be switched off by the attacker (+1 on
+    every pixel), so the API always passes the codec (security audit 21/11, F4)."""
     grid = manifest.grid
+    same_size = rgb.shape[0] == grid.height and rgb.shape[1] == grid.width
     spec = F.check_spec(manifest.feature)
     tiles = sorted(disclosure.tiles, key=lambda t: t.i)
     if [t.i for t in tiles] != list(range(grid.count)) or any(
@@ -243,6 +257,8 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
     statuses: list[TileStatus] = []
     original_tiles = 0
     distances: list[float] = []
+    with_original = near_original = 0  # tiles with a distinct unwatermarked version / reproduced
+
     for t in tiles:
         if t.redacted:
             # Authenticated by hash only: the received pixels must really be blacked out,
@@ -260,6 +276,9 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
         else:
             closer_to_original = False
         distances.append(dist)
+        if t.g is not None:
+            with_original += 1
+            near_original += closer_to_original and dist <= STRICT_TOL
         if _exact_leaf(rgb, grid, t.i, bytes.fromhex(t.salt)).hex() == t.x:
             statuses.append(TileStatus.EXACT)
         elif dist <= F.TOLERANCE:
@@ -270,15 +289,19 @@ def verify(rgb: np.ndarray, manifest: Manifest, disclosure: Disclosure) -> Verif
 
     # 3. A lossless copy (most textured tiles byte-identical) has no recompression noise to
     # forgive: a tile that is merely "close" there was edited subtly (recolouring, light blur).
+    # A lossless file at another size is a resampled copy (screenshot, resize), not the signed
+    # pixels: it falls back to the guess. Strict mode also requires redacted tiles to be truly
+    # black (no visible content under a "redacted" label, audit F5).
     textured = [k for k, t in enumerate(tiles) if not t.redacted and F.is_textured(t.f, spec)]
     exact_textured = sum(statuses[k] == TileStatus.EXACT for k in textured)
-    if textured and exact_textured >= LOSSLESS_EXACT_SHARE * len(textured):
+    guessed = bool(textured) and exact_textured >= LOSSLESS_EXACT_SHARE * len(textured)
+    if (lossless and same_size) or guessed:
+        original_copy = with_original > 0 and near_original >= ORIGINAL_COPY_SHARE * with_original
         for k, s in enumerate(statuses):
-            if s == TileStatus.ROBUST:
+            if s == TileStatus.ROBUST and not (original_copy and distances[k] <= STRICT_TOL):
                 statuses[k] = TileStatus.CHANGED
             elif s == TileStatus.REDACTED and np.percentile(tile_pixels(rgb, grid, tiles[k].i), 99) > REDACTED_MAX_LOSSLESS_P99:
                 statuses[k], distances[k] = TileStatus.CHANGED, float("inf")
-        original_tiles = 0
 
     if TileStatus.CHANGED in statuses:
         verdict = Verdict.EDITED

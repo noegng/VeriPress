@@ -231,3 +231,156 @@ def test_redacted_copy_shared_as_jpeg_keeps_its_redacted_tiles(photo, ledger, st
     # The hidden tiles still pass as redacted. (At these sizes, 16-20 px per tile once shared, a
     # neighbour of the black box may drift past the tolerance: that predates this check.)
     assert report.tiles.counts()["redacted"] == len(grid_for(photo, 32).tiles_in_box(96, 96, 288, 224))
+
+
+# ---------------------------------------------------------------- 8. security audit 21/11 (F1-F6)
+
+
+def shift(rgb: np.ndarray, d: int) -> np.ndarray:
+    return np.clip(rgb.astype(np.int16) + d, 0, 255).astype(np.uint8)
+
+
+def test_eight_planted_records_do_not_hide_the_genuine_one(photo, ledger, store, no_watermark):
+    """F1: records planted with the genuine perceptual hash, sorted before it, used to push it
+    out of the first 8 candidates (never verified -> unknown)."""
+    signed, png = sign_image(photo, "device", ledger, store)
+    shared = jpeg(png_to_rgb(png), 80)
+    e = store.get(signed.entry_id)
+    for k in range(8):
+        store.put(Entry(f"{k:016X}", f"{0xDEAD0000 + k:064X}", e.manifest, e.disclosure, phash(shared)))
+    report, _ = verify_image(shared, ledger, store)
+    assert report.verdict == FinalVerdict.REAL
+    assert report.entry_id == signed.entry_id
+
+
+@pytest.mark.parametrize("content", ['{"id": "0000000000000000"}', "not json", '{"id": "0000000000000000", "phash": 5}',
+                                     '{"id": "1111111111111111", "tx_hash": "AB", "manifest": {}, "disclosure": {}, "phash": "00"}'])
+def test_a_malformed_store_record_does_not_break_id_less_verification(photo, ledger, store, content):
+    """F2: one malformed file in the (untrusted) store used to make every verification without
+    an id raise (HTTP 500). It is now skipped."""
+    signed, png = sign_image(photo, "device", ledger, store)
+    bad = store.root / "0000000000000000"
+    bad.mkdir(parents=True, exist_ok=True)
+    (bad / "entry.json").write_text(content)
+    report, _ = verify_image(png_to_rgb(png), ledger, store)
+    assert report.verdict == FinalVerdict.REAL and report.entry_id == signed.entry_id
+    assert store.get("0000000000000000") is None
+    from veripress.pipeline import lookup_records
+    assert lookup_records(png_to_rgb(png), store, ledger)[0]["entry_id"] == signed.entry_id
+
+
+def test_develop_of_a_capture_anchored_before_accreditation_is_not_real(photo, keys, tmp_path, no_watermark):
+    """F3: a named capture anchored BEFORE its key was accredited is unknown on its own; its
+    'development' signed after accreditation used to inherit a 'real' verdict through the chain."""
+    import time
+    from dataclasses import replace
+
+    class TimedLedger(FakeLedger):
+        """Validity intervals, like XrplLedger.credential_type(at_time)."""
+
+        def __init__(self):
+            super().__init__()
+            self.issued = {}
+
+        def issue(self, pk, ctype, passkey_hash=None, pq_hash=None, at=None):
+            super().issue(pk, ctype, passkey_hash, pq_hash, at)
+            self.issued[pk] = int(time.time()) if at is None else at
+
+        def credential_type(self, pk, at_time=None):
+            if at_time is not None:
+                since = self.issued.get(pk)
+                if since is None or at_time < since:
+                    return None
+            return super().credential_type(pk, at_time)
+
+    ledger = TimedLedger()
+    store = Store(tmp_path / "store")
+    cap, cap_png = sign_image(photo, "device", ledger, store)  # no credential yet
+    ledger.anchors[cap.entry_id] = replace(ledger.anchors[cap.entry_id], timestamp=1000)
+    rc, _ = verify_image(png_to_rgb(cap_png), ledger, store, entry_id=cap.entry_id)
+    assert rc.verdict == FinalVerdict.UNKNOWN
+
+    ledger.issue(keys["device"], CredentialType.CAPTURE_DEVICE, at=2000)  # accredited later
+    dev, dev_png = sign_image(png_to_rgb(cap_png), "device", ledger, store, parent=cap.entry_id, op="develop")
+    rd, _ = verify_image(png_to_rgb(dev_png), ledger, store, entry_id=dev.entry_id)
+    assert rd.verdict != FinalVerdict.REAL
+    assert rd.history[1]["verified"] is False and rd.history[1]["credential"] is None
+
+
+def test_plus_one_does_not_disable_the_lossless_guard(photo, ledger, store, no_watermark):
+    """F4: +1 on every pixel made no tile byte-identical, so the pixel-based 'lossless copy'
+    guess switched off and a subtle blur passed as recompression. The API now passes the
+    codec of the received file (lossless=True for a PNG at the signed size)."""
+    signed, png = sign_image(photo, "device", ledger, store)
+    forged = shift(blur(png_to_rgb(png), 0.8), 1)
+    guessed, _ = verify_image(forged, ledger, store, entry_id=signed.entry_id)
+    assert guessed.verdict == FinalVerdict.REAL  # the limit of the pixel guess, kept for tests/CLI
+    report, _ = verify_image(forged, ledger, store, entry_id=signed.entry_id, lossless=True)
+    # Every pixel moved: in a lossless file that is not the signed image any more. All tiles
+    # are changed, so the verdict is "does not match this record" (unknown), never real.
+    assert report.verdict in (FinalVerdict.EDITED, FinalVerdict.UNKNOWN)
+    assert report.tiles.counts()["changed"] > 0
+    # The blur alone (no +1) is caught by the pixel guess as before, and by the codec too.
+    for lossless in (None, True):
+        assert verify_image(blur(png_to_rgb(png), 0.8), ledger, store, entry_id=signed.entry_id,
+                            lossless=lossless)[0].verdict == FinalVerdict.EDITED
+
+
+def test_lossless_mode_does_not_flag_a_resized_or_recompressed_copy(photo, ledger, store, no_watermark):
+    """Strict mode needs a lossless file AT THE SIGNED SIZE: a resized PNG (screenshot) is a
+    resampled copy, still judged with the recompression tolerance; so is a JPEG."""
+    signed, png = sign_image(photo, "device", ledger, store)
+    rgb = png_to_rgb(png)
+    assert verify_image(rescale(rgb, 0.5), ledger, store, lossless=True)[0].verdict == FinalVerdict.REAL
+    assert verify_image(jpeg(rgb, 80), ledger, store, lossless=False)[0].verdict == FinalVerdict.REAL
+    assert verify_image(rgb, ledger, store, lossless=True)[0].verdict == FinalVerdict.REAL
+
+
+def test_visible_dark_content_under_a_redaction_is_edited(photo, ledger, store, no_watermark):
+    """F5: dark but visible content painted under a 'redacted' label (+1 to defeat the pixel
+    guess) used to pass; in a lossless file the redacted area must be truly black."""
+    signed, png = sign_image(photo, "device", ledger, store)
+    rid, red_png = redact_image(png_to_rgb(png), signed.entry_id, [(0, 0, 640, 224)], store)
+    im = Image.fromarray(png_to_rgb(red_png))
+    d = ImageDraw.Draw(im)
+    d.rectangle((40, 40, 600, 200), fill=(8, 8, 8))
+    d.text((60, 60), "This text was never in the signed photo", fill=(40, 40, 40))
+    for x in range(60, 580, 24):
+        d.line((x, 100, x + 12, 160), fill=(36, 36, 36), width=2)
+    forged = shift(np.asarray(im), 1)
+    report, _ = verify_image(forged, ledger, store, entry_id=rid, lossless=True)
+    assert report.verdict in (FinalVerdict.EDITED, FinalVerdict.UNKNOWN)
+    c = report.tiles.counts()
+    assert c["changed"] > 0 and c["redacted"] < 3 * 20  # the painted tiles are no longer "redacted"
+    painted, _ = verify_image(np.asarray(im), ledger, store, entry_id=rid, lossless=True)  # without +1
+    assert painted.verdict == FinalVerdict.EDITED and painted.tiles.counts()["changed"] > 0
+    clean, _ = verify_image(png_to_rgb(red_png), ledger, store, entry_id=rid, lossless=True)
+    assert clean.verdict == FinalVerdict.REAL and clean.tiles.counts()["redacted"] > 0
+
+
+def test_passkey_attestation_is_read_at_anchor_time():
+    """F6: the passkey attested AT the anchor counts, not the latest one."""
+    lg = FakeLedger()
+    lg.issue("ED-DEV", CredentialType.CAPTURE_DEVICE, passkey_hash="old", at=1000)
+    lg.issue("ED-DEV", CredentialType.CAPTURE_DEVICE, passkey_hash="new", at=2000)
+    assert lg.credential_passkey("ED-DEV", at_time=1500) is None  # FakeLedger keeps the latest only
+    assert lg.credential_passkey("ED-DEV", at_time=2500) == "new"
+    assert lg.credential_passkey("ED-DEV") == "new"
+
+
+def test_strict_mode_accepts_a_lossless_copy_of_the_unwatermarked_original():
+    """The signed pixels are watermarked; the device also commits the features of the original
+    (TileDisclosure.g). A lossless copy of that original is not byte-identical to the signed
+    pixels but reproduces g to rounding: still intact in strict mode. +1 on the published
+    (watermarked) pixels does not reproduce g, and stays an edit."""
+    from conftest import photo_like as _photo
+
+    orig = _photo(seed=11)
+    rng = np.random.default_rng(3)
+    marked = np.clip(orig.astype(np.int16) + rng.integers(-6, 7, orig.shape), 0, 255).astype(np.uint8)
+    manifest, disclosure = commit(marked, b"s" * 32, original=orig)
+    assert sum(t.g is not None for t in disclosure.tiles) > len(disclosure.tiles) // 2
+    ok = verify(orig, manifest, disclosure, lossless=True)
+    assert TileStatus.CHANGED not in ok.statuses and ok.original_tiles > 0
+    assert TileStatus.CHANGED in verify(shift(marked, 1), manifest, disclosure, lossless=True).statuses
+    assert all(s == TileStatus.EXACT for s in verify(marked, manifest, disclosure, lossless=True).statuses)

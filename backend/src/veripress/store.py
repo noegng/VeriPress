@@ -60,16 +60,45 @@ class Store:
         if not valid_id(entry_id):
             return None
         p = self.root / entry_id / "entry.json"
-        if not p.exists():
+        return self._read_entry(p) if p.exists() else None
+
+    # The store is untrusted (anyone can add a record): reading it is total. A malformed record
+    # (bad JSON, missing field, wrong type, id that is not its folder's) is skipped, never fatal
+    # (security audit 21/11, F2: one bad file used to break every id-less verification).
+    @staticmethod
+    def _load(path: Path):
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError, TypeError):
             return None
-        d = json.loads(p.read_text())
-        return Entry(
-            id=d["id"],
-            tx_hash=d["tx_hash"],
-            manifest=Manifest.from_dict(d["manifest"]),
-            disclosure=Disclosure.from_dict(d["disclosure"]),
-            phash=int(d["phash"], 16),
-        )
+
+    @classmethod
+    def _read_entry(cls, path: Path) -> Entry | None:
+        d = cls._load(path)
+        try:
+            if d["id"] != path.parent.name:
+                return None
+            return Entry(
+                id=d["id"],
+                tx_hash=d["tx_hash"],
+                manifest=Manifest.from_dict(d["manifest"]),
+                disclosure=Disclosure.from_dict(d["disclosure"]),
+                phash=int(d["phash"], 16),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
+
+    def _index(self) -> list[tuple[str, str | None, int]]:
+        """(folder, watermark id, perceptual hash) of every readable record."""
+        out = []
+        for p in self.root.glob("*/entry.json"):
+            d = self._load(p)
+            try:
+                wm = d["manifest"].get("wm_id")
+                out.append((p.parent.name, wm if isinstance(wm, str) else None, int(d["phash"], 16)))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        return out
 
     def put_bundle(self, entry_id: str, bundle: dict) -> None:
         """Proof bundle of an anonymous / passkey signature (its sha256 is anchored)."""
@@ -79,7 +108,8 @@ class Store:
         if not valid_id(entry_id):
             return None
         p = self.root / entry_id / "bundle.json"
-        return json.loads(p.read_text()) if p.exists() else None
+        d = self._load(p) if p.exists() else None
+        return d if isinstance(d, dict) else None
 
     def put_meta(self, entry_id: str, claims: list[dict]) -> None:
         """ZK proofs of capture-metadata claims (untrusted: checked against the signed commitment)."""
@@ -89,10 +119,7 @@ class Store:
         if not valid_id(entry_id):
             return []
         p = self.root / entry_id / "meta.json"
-        try:
-            data = json.loads(p.read_text()) if p.exists() else []
-        except ValueError:
-            return []
+        data = self._load(p) if p.exists() else []
         return data if isinstance(data, list) else []
 
     def put_pq(self, entry_id: str, pq: dict) -> None:
@@ -102,10 +129,7 @@ class Store:
 
     def get_pq(self, entry_id: str) -> dict | None:
         p = self.root / entry_id / "pq.json" if valid_id(entry_id) else None
-        try:
-            data = json.loads(p.read_text()) if p is not None and p.exists() else None
-        except ValueError:
-            return None
+        data = self._load(p) if p is not None and p.exists() else None
         return data if isinstance(data, dict) else None
 
     def put_receipt(self, entry_id: str, receipt: dict) -> None:
@@ -118,10 +142,7 @@ class Store:
         p = self.root / entry_id / "receipt.json" if valid_id(entry_id) else None
         if p is None or not p.exists():
             return None
-        try:
-            data = json.loads(p.read_text())
-        except ValueError:
-            return None
+        data = self._load(p)
         return data if isinstance(data, dict) else None
 
     def image_path(self, entry_id: str) -> Path:
@@ -132,40 +153,21 @@ class Store:
     def find_by_watermark(self, wm_id: str, phash: int) -> Entry | None:
         """Entries whose manifest carries this watermark id (original + redacted variants):
         return the one closest to `phash`."""
-        best: tuple[int, str] | None = None
-        for p in self.root.glob("*/entry.json"):
-            d = json.loads(p.read_text())
-            if d["manifest"].get("wm_id") == wm_id:
-                dist = (phash ^ int(d["phash"], 16)).bit_count()
-                if best is None or dist < best[0]:
-                    best = (dist, d["id"])
-        return self.get(best[1]) if best else None
+        found = self.find_all_by_watermark(wm_id, phash)
+        return found[0] if found else None
 
     def find_all_by_watermark(self, wm_id: str, phash: int) -> list[Entry]:
         """Every entry whose manifest carries this watermark id, closest perceptual hash first.
         The store is untrusted: anyone may add a variant, so callers verify each candidate."""
-        found = []
-        for p in self.root.glob("*/entry.json"):
-            d = json.loads(p.read_text())
-            if d["manifest"].get("wm_id") == wm_id:
-                found.append(((phash ^ int(d["phash"], 16)).bit_count(), "-r" in d["id"], d["id"]))
+        found = [((phash ^ ph).bit_count(), "-r" in i, i) for i, wm, ph in self._index() if wm == wm_id]
         return [e for _, _, i in sorted(found) if (e := self.get(i)) is not None]
 
     def nearest_all(self, phash: int, max_distance: int = 10) -> list[Entry]:
         """Every entry within max_distance of the perceptual hash, closest first (untrusted)."""
-        found = []
-        for p in self.root.glob("*/entry.json"):
-            dist = (phash ^ int(json.loads(p.read_text())["phash"], 16)).bit_count()
-            if dist <= max_distance:
-                found.append((dist, "-r" in p.parent.name, p.parent.name))
-        return [e for _, _, i in sorted(found) if (e := self.get(i)) is not None]
+        found = [((phash ^ ph).bit_count(), "-r" in i, i) for i, _, ph in self._index()]
+        return [e for d, _, i in sorted(found) if d <= max_distance and (e := self.get(i)) is not None]
 
     def nearest(self, phash: int, max_distance: int = 10) -> Entry | None:
         """Closest entry by Hamming distance on the perceptual hash, if within max_distance."""
-        best: tuple[int, str] | None = None
-        for p in self.root.glob("*/entry.json"):
-            other = int(json.loads(p.read_text())["phash"], 16)
-            dist = (phash ^ other).bit_count()
-            if dist <= max_distance and (best is None or dist < best[0]):
-                best = (dist, p.parent.name)
-        return self.get(best[1]) if best else None
+        found = self.nearest_all(phash, max_distance)
+        return found[0] if found else None

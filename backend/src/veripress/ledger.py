@@ -95,9 +95,10 @@ class Ledger(Protocol):
         currently revoked; None if it is valid now or was never issued."""
         ...
 
-    def credential_passkey(self, pubkey: str) -> str | None:
+    def credential_passkey(self, pubkey: str, at_time: int | None = None) -> str | None:
         """sha256 hex of the P-256 passkey public key attested in the URI of the key's
-        CAPTURE_DEVICE credential ("passkey=<base64url sha256>"), or None."""
+        CAPTURE_DEVICE credential ("passkey=<base64url sha256>"), or None. `at_time`: the
+        attestation in force at that instant (None = the latest)."""
         ...
 
     def registry_root_at(self, at_time: int) -> str | None:
@@ -132,7 +133,7 @@ class FakeLedger:
         self.anchors: dict[str, Anchor] = {}
         self.credentials: dict[str, CredentialType] = {}
         self.revoked_at: dict[str, int] = {}
-        self.passkeys: dict[str, str] = {}
+        self.passkeys: dict[str, tuple[int, str]] = {}  # pubkey -> (attested since, sha256)
         self.pq_keys: dict[str, tuple[int, str]] = {}  # pubkey -> (attested since, sha256 hex)
         self.registry_roots: list[tuple[int, str]] = []  # (published at, root), in order
         self.ledgers: dict[int, tuple[str, int]] = {}  # index -> (hash, close time)
@@ -144,7 +145,7 @@ class FakeLedger:
         self.credentials[pubkey] = ctype
         self.revoked_at.pop(pubkey, None)
         if passkey_hash:
-            self.passkeys[pubkey] = passkey_hash
+            self.passkeys[pubkey] = (int(time.time()) if at is None else at, passkey_hash)
         if pq_hash:
             self.pq_keys[pubkey] = (int(time.time()) if at is None else at, pq_hash)
 
@@ -205,8 +206,9 @@ class FakeLedger:
     def credential_revoked_at(self, pubkey: str) -> int | None:
         return self.revoked_at.get(pubkey)
 
-    def credential_passkey(self, pubkey: str) -> str | None:
-        return self.passkeys.get(pubkey)
+    def credential_passkey(self, pubkey: str, at_time: int | None = None) -> str | None:
+        since, sha = self.passkeys.get(pubkey, (0, None))
+        return sha if sha and (at_time is None or at_time >= since) else None
 
     def registry_root_at(self, at_time: int) -> str | None:
         roots = [r for t, r in self.registry_roots if t <= at_time]

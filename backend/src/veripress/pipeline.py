@@ -369,7 +369,9 @@ def _check_passkey(anchor: Anchor, manifest: Manifest, bundle: dict | None, ledg
     except ValueError:
         ok = False
     try:
-        attested = ledger.credential_passkey(anchor.pubkey) == _sha256_hex(manifest.passkey)
+        # The attestation in force at anchor time (audit 21/11, F6): attesting a new passkey later
+        # neither validates an older manifest nor invalidates photos signed with the previous one.
+        attested = ledger.credential_passkey(anchor.pubkey, at_time=anchor.timestamp) == _sha256_hex(manifest.passkey)
     except Exception:  # noqa: BLE001
         attested = False
     return ok, attested
@@ -458,7 +460,8 @@ def _check_anonymous(anchor: Anchor, manifest: Manifest, bundle: dict | None, le
 
 
 def verify_image(
-    rgb: np.ndarray, ledger: Ledger, store: Store, entry_id: str | None = None, heatmap_png: bool = True
+    rgb: np.ndarray, ledger: Ledger, store: Store, entry_id: str | None = None, heatmap_png: bool = True,
+    lossless: bool | None = None,
 ) -> tuple[Report, bytes | None]:
     """Find the entry (entry_id > watermark > phash), check anchor/signature/credential/tiles.
     Returns the report and the heatmap PNG (None when no entry was found, or when not asked for:
@@ -477,7 +480,9 @@ def verify_image(
         candidates = [(e, "watermark") for e in (store.find_all_by_watermark(wm.hex(), ph) if wm else [])]
         seen = {e.id for e, _ in candidates}
         candidates += [(e, "phash") for e in store.nearest_all(ph) if e.id not in seen]
-        candidates = candidates[:MAX_CANDIDATES]
+        # No truncation: whoever can write to the store could plant records sorted before the
+        # genuine one and hide it (security audit 21/11, F1). Every candidate is verified; the
+        # cost is bounded by the store (rate-limit the API in production).
     candidates = [(e, f) for e, f in candidates if e is not None]
     if not candidates:
         reason = f"No provenance record for id {entry_id}" if entry_id else "No provenance found for this image"
@@ -487,7 +492,11 @@ def verify_image(
     cached = LedgerReadCache(ledger)
     best = None
     for e, f in candidates:
-        result = _verify_entry(rgb, e, f, cached, store)
+        try:
+            result = _verify_entry(rgb, e, f, cached, store, lossless)
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as err:  # untrusted record
+            result = (Report(FinalVerdict.UNKNOWN, f"Record {e.id} could not be read ({type(err).__name__})",
+                             f, e.id, None, None, False, None), None)
         if best is None or _support(result) > _support(best):
             best = result
         if _support(best) == PERFECT_SUPPORT:  # no other record can support the image better
@@ -498,7 +507,6 @@ def verify_image(
     return report, hm
 
 
-MAX_CANDIDATES = 8
 PERFECT_SUPPORT = (2, 0, 0)  # _support of a real/AI verdict with no changed and no redacted tile
 
 
@@ -567,8 +575,8 @@ def _support(result: tuple["Report", Manifest | None]) -> tuple:
     return rank, -c["changed"], -c["redacted"]
 
 
-def _verify_entry(rgb: np.ndarray, entry: Entry, found_by: FoundBy, ledger: Ledger, store: Store
-                  ) -> tuple["Report", Manifest | None]:
+def _verify_entry(rgb: np.ndarray, entry: Entry, found_by: FoundBy, ledger: Ledger, store: Store,
+                  lossless: bool | None = None) -> tuple["Report", Manifest | None]:
     """Verify the image against one record. Returns the report and the record's manifest."""
     manifest = entry.manifest
     anchor, batch_info, err = _fetch_anchor(entry.tx_hash, ledger, store)
@@ -583,7 +591,7 @@ def _verify_entry(rgb: np.ndarray, entry: Entry, found_by: FoundBy, ledger: Ledg
         revoked_at = ledger.credential_revoked_at(anchor.pubkey)
         if revoked_at is not None and revoked_at <= anchor.timestamp:
             revoked_at = None
-    tiles = verify(rgb, manifest, entry.disclosure)
+    tiles = verify(rgb, manifest, entry.disclosure, lossless=lossless)
     reason = ""
     if not auth["manifest_matches"]:
         verdict = FinalVerdict.UNKNOWN
@@ -635,6 +643,7 @@ def _verify_entry(rgb: np.ndarray, entry: Entry, found_by: FoundBy, ledger: Ledg
         neg = store.get(manifest.parent) if manifest.parent else None
         chain_ok = (
             all(h["verified"] for h in history) and len(history) >= 2 and history[1]["op"] == "capture"
+            and history[1]["credential"] is not None
             and neg is not None and not manifest.anonymous and not neg.manifest.anonymous
             and bool(manifest.signer) and neg.manifest.signer == manifest.signer  # "same device" provable
         )
@@ -706,7 +715,7 @@ def verify_stored(entry_id: str, ledger: Ledger, store: Store, heatmap_png: bool
     if store.get(entry_id) is None or not path.exists():
         raise KeyError(entry_id)
     rgb = np.asarray(Image.open(path).convert("RGB"))
-    return verify_image(rgb, ledger, store, entry_id=entry_id, heatmap_png=heatmap_png)
+    return verify_image(rgb, ledger, store, entry_id=entry_id, heatmap_png=heatmap_png, lossless=True)  # the stored PNG
 
 
 def _utc(ts: int) -> str:
@@ -767,7 +776,7 @@ def _authenticate(anchor: Anchor, manifest: Manifest, tx_hash: str, ledger: Ledg
     out["verified"] = bool(
         (out["pq"] is None or (out["pq"]["signature_ok"] and out["pq"]["attested"]))
         and out["manifest_matches"] and out["sig_ok"]
-        and (not anchor.anonymous or out["credential"] is not None)  # root in force at anchor time
+        and out["credential"] is not None  # accredited at anchor time, every mode (audit 21/11, F3)
         and (not out["passkey"] or out["passkey_attested"])
     )
     return out
@@ -779,11 +788,13 @@ def _history(tx_hash: str | None, ledger: Ledger, store: Store, max_depth: int =
     while tx_hash and len(out) < max_depth:
         entry, anchor = store.get(tx_hash), _fetch_anchor(tx_hash, ledger, store)[0]
         if entry is None or anchor is None:
-            out.append({"tx_hash": tx_hash, "op": None, "timestamp": None, "verified": False})
+            out.append({"tx_hash": tx_hash, "op": None, "timestamp": None, "verified": False, "credential": None})
             break
         m = entry.manifest
-        ok = _authenticate(anchor, m, tx_hash, ledger, store)["verified"]
-        out.append({"tx_hash": tx_hash, "op": m.op, "timestamp": anchor.timestamp, "verified": ok})
+        auth = _authenticate(anchor, m, tx_hash, ledger, store)
+        ok = auth["verified"]
+        cred = auth["credential"].value if auth["credential"] is not None else None
+        out.append({"tx_hash": tx_hash, "op": m.op, "timestamp": anchor.timestamp, "verified": ok, "credential": cred})
         tx_hash = m.parent if ok else None
     return out
 
