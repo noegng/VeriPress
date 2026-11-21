@@ -557,12 +557,10 @@ function xrplTx(hash) {
   });
 }
 
-// Start tile: the one clicked, else the bottom row (centre): climbing from there, each hash covers
-// a longer run of tiles in reading order, sweeping up the photo until the root covers all of it.
+// Start tile: the one clicked, else the top-left tile (#0): climbing from there, each hash covers
+// twice as many tiles in reading order (2, 4, 8…), sweeping down the photo until the root.
 function replayTile(r) {
-  if (S.pin != null) return S.pin;
-  const { cols, rows } = r.tiles.grid;
-  return Math.min((rows - 1) * cols + Math.floor(cols / 2), r.tiles.statuses.length - 1);
+  return S.pin != null ? S.pin : 0;
 }
 function rpDraw(k, j, i) {
   const cv = $("#rpcv"), img = $("#rpimg"), M = S.M; if (!cv || !img.clientWidth) return;
@@ -593,7 +591,7 @@ async function replay() {
   const box = document.createElement("div"); box.className = "rp"; box.id = "rp";
   box.innerHTML = `<div class="rpin"><div class="rphead"><div><div class="rpk">Proof replay · computed in this browser</div><h2>Don't trust us. Your browser checks it.</h2></div>
       <div><button class="rpb" data-rp="again">↻ Replay</button><button class="rpb" data-rp="close">✕</button></div></div>
-    <div class="rpgrid"><div class="rpleft"><div class="ovl"><img id="rpimg" src="${S.img}" alt=""><canvas id="rpcv"></canvas></div><div class="rpcap" id="rpcap">${S.pin != null ? `Tile #${i}, the one you chose` : `Tile #${i}: bottom row of the photo`}</div>
+    <div class="rpgrid"><div class="rpleft"><div class="ovl"><img id="rpimg" src="${S.img}" alt=""><canvas id="rpcv"></canvas></div><div class="rpcap" id="rpcap">${S.pin != null ? `Tile #${i}, the one you chose` : `Tile #${i}: top-left corner of the photo`}</div>
       <div class="rptk"><span>↑ root</span><span>Merkle tree</span></div><svg class="rptree" id="rptree" preserveAspectRatio="none"></svg><div class="rptk"><span>↓ leaves: one per tile</span><span></span></div></div>
     <ol class="rpsteps" id="rpsteps"></ol></div></div>`;
   $("#rp")?.remove(); document.body.appendChild(box);
