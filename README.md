@@ -7,7 +7,7 @@ Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track
 
 ▶ **Demo video (4 min, live on XRPL Testnet): https://youtu.be/1zFHc1JARNs**
 
-![VeriPress report for an edited photo: the changed tiles are shown in red on the photo and in the Merkle tree](docs/screenshots/edited.jpg)
+![VeriPress report for an edited photo: the changed tiles are shown in red on the photo and in the Merkle tree](docs/screenshots/report-edited.jpg)
 
 **In 2 minutes:** watch the video, or [run it](#run-it) and click the specimens on the home page (*Signed original*, *Edited copy*, *After WhatsApp*, *Redacted*, *AI image*, *Copied watermark*). Each one opens a report: the verdict, the tile heatmap, the Merkle tree, and every check with its evidence on the ledger.
 
@@ -61,9 +61,9 @@ Verification reports from the web app, on XRPL Testnet, for a street photo taken
 
 | | |
 |---|---|
-| ![Signed original: Authentic, every tile exact](docs/screenshots/signed.jpg) **🟢 Signed original**: not a pixel changed | ![Edited copy: 62 changed tiles shown in red](docs/screenshots/edited.jpg) **🟠 Edited copy**: the changed tiles, and the tree branches they break |
-| ![After WhatsApp: Authentic, tiles recompressed](docs/screenshots/whatsapp.jpg) **🟢 After WhatsApp**: recompressed and metadata stripped, found through the watermark | ![Redacted: 60 tiles hidden on purpose, the rest verified](docs/screenshots/redacted.jpg) **🟢 Redacted**: the people hidden with the site's redaction tool; hidden tiles stay authenticated by hash |
-| ![AI image: declared by an accredited AI generator](docs/screenshots/ai.jpg) **🔵 AI-generated**: signed by an accredited generator | ![Copied watermark: content does not match the record](docs/screenshots/copied.jpg) **⚪ Copied watermark**: the watermark points to a record whose content doesn't match |
+| ![Signed original: Authentic, every tile exact](docs/screenshots/report-signed.jpg) **🟢 Signed original**: not a pixel changed | ![Edited copy: 62 changed tiles shown in red](docs/screenshots/report-edited.jpg) **🟠 Edited copy**: the changed tiles, and the tree branches they break |
+| ![After WhatsApp: Authentic, tiles recompressed](docs/screenshots/report-whatsapp.jpg) **🟢 After WhatsApp**: recompressed and metadata stripped, found through the watermark | ![Redacted: 60 tiles hidden on purpose, the rest verified](docs/screenshots/report-redacted.jpg) **🟢 Redacted**: the people hidden with the site's redaction tool; hidden tiles stay authenticated by hash |
+| ![AI image: declared by an accredited AI generator](docs/screenshots/report-ai.jpg) **🔵 AI-generated**: signed by an accredited generator | ![Copied watermark: content does not match the record](docs/screenshots/report-copied.jpg) **⚪ Copied watermark**: the watermark points to a record whose content doesn't match |
 
 ## Demo scenario
 
