@@ -57,12 +57,12 @@ Without the ledger there is no trust registry, no public timestamp and no revoca
 
 ## Screenshots
 
-Verification reports from the web app, on XRPL Testnet. Faces are blurred in these screenshots only. Each photo is cut into tiles; each tile is a leaf of the Merkle tree shown on the right, whose root is anchored on the ledger.
+Verification reports from the web app, on XRPL Testnet, for a street photo taken in Bari. Each photo is cut into tiles; each tile is a leaf of the Merkle tree shown on the right, whose root is anchored on the ledger.
 
 | | |
 |---|---|
 | ![Signed original: Authentic, every tile exact](docs/screenshots/signed.jpg) **🟢 Signed original**: not a pixel changed | ![Edited copy: 62 changed tiles shown in red](docs/screenshots/edited.jpg) **🟠 Edited copy**: the changed tiles, and the tree branches they break |
-| ![After WhatsApp: Authentic, tiles recompressed](docs/screenshots/whatsapp.jpg) **🟢 After WhatsApp**: recompressed and metadata stripped, found through the watermark | ![Redacted: 88 tiles hidden on purpose, the rest verified](docs/screenshots/redacted.jpg) **🟢 Redacted**: hidden tiles stay authenticated by hash |
+| ![After WhatsApp: Authentic, tiles recompressed](docs/screenshots/whatsapp.jpg) **🟢 After WhatsApp**: recompressed and metadata stripped, found through the watermark | ![Redacted: 60 tiles hidden on purpose, the rest verified](docs/screenshots/redacted.jpg) **🟢 Redacted**: the people hidden with the site's redaction tool; hidden tiles stay authenticated by hash |
 | ![AI image: declared by an accredited AI generator](docs/screenshots/ai.jpg) **🔵 AI-generated**: signed by an accredited generator | ![Copied watermark: content does not match the record](docs/screenshots/copied.jpg) **⚪ Copied watermark**: the watermark points to a record whose content doesn't match |
 
 ## Demo scenario
