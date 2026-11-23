@@ -1,10 +1,15 @@
 # VeriPress
 
+> **Apple's Reference Image, for any camera, on the XRP Ledger.**
 > Prove where an image comes from — and show exactly which parts changed — even after it has been compressed and shared on social media.
 
-Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track 1: Advanced cryptography for blockchain**.
+Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track 1: Advanced cryptography for blockchain**. Finished 4th, one point off the podium.
 
 ▶ **Demo video (4 min, live on XRPL Testnet): https://youtu.be/1zFHc1JARNs**
+
+![VeriPress report for an edited photo: the changed tiles are shown in red on the photo and in the Merkle tree](docs/screenshots/edited.jpg)
+
+**In 2 minutes:** watch the video, or [run it](#run-it) and click the specimens on the home page (*Signed original*, *Edited copy*, *After WhatsApp*, *Redacted*, *AI image*, *Copied watermark*). Each one opens a report: the verdict, the tile heatmap, the Merkle tree, and every check with its evidence on the ledger.
 
 ---
 
@@ -25,6 +30,20 @@ Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track
 4. **Watermark** — an invisible watermark (Adobe TrustMark) in the pixels carries a random 64-bit lookup id committed in the signed manifest, so provenance survives metadata stripping. The robust tree binds the watermark to the content, so copying it onto another image is detected. It is only a pointer: the verdict comes from the signature and the Merkle roots, and the unwatermarked original verifies too.
 5. **Prove facts, not data** — zero-knowledge proofs show "taken on 20 Nov 2026" and "within ~10 km of …" without publishing the exact time or GPS position.
 
+## What XRPL does, and where in the code
+
+Without the ledger there is no trust registry, no public timestamp and no revocation: XRPL is the protocol's root of trust, not a storage layer.
+
+| Feature | XRPL primitive | Code |
+|---|---|---|
+| Accredited capture devices and AI generators | **Credentials** (`CredentialCreate` by the registry, `CredentialAccept` by the device), type `CAPTURE_DEVICE` / `AI_GENERATOR` | [`backend/scripts/setup_testnet.py`](backend/scripts/setup_testnet.py), `XrplLedger.credential_type` in [`ledger.py`](backend/src/veripress/ledger.py) |
+| Revocation, not retroactive | `CredentialDelete`; the credential is checked at the anchor's ledger time | `_credential_intervals`, `_revoked_at` in [`ledger.py`](backend/src/veripress/ledger.py) |
+| Public timestamp and manifest registry | `Payment` of 1 drop with a `veripress/v1` **Memo** (manifest digest, signature, key) | `XrplLedger.anchor` in [`ledger.py`](backend/src/veripress/ledger.py) |
+| "Not signed before" bound | A recent validated ledger hash is inside the signed manifest | [`commitment.py`](backend/src/veripress/commitment.py), [`pipeline.py`](backend/src/veripress/pipeline.py) |
+| Many photos, one transaction | One Memo carries the root of a batch of signed records | [`batching.py`](backend/src/veripress/batching.py), `anchor_batch` in [`ledger.py`](backend/src/veripress/ledger.py) |
+| Anonymous signing (zero knowledge) | Root of the accredited-device set published as a `veripress/registry-root/v1` Memo; the proof shows membership at time T | `registry_root_at` in [`ledger.py`](backend/src/veripress/ledger.py), [`zk/circuits/device.circom`](zk/circuits/device.circom) |
+| Passkey and post-quantum attestations | Bound to the device in the Credential `URI` | `attestation_uri` in [`ledger.py`](backend/src/veripress/ledger.py) |
+
 ## Verdicts
 
 | Verdict | Meaning |
@@ -35,6 +54,16 @@ Built for **IXH26 – Italian XRPL Hackathon** (Bari, 20–21 Nov 2026), **Track
 | ⚪ **Unknown** | No valid provenance found (≠ fake) |
 
 **Verifiable redaction:** black out a face; hidden tiles stay authenticated by hash only, and the rest of the image still verifies against the original signature.
+
+## Screenshots
+
+Verification reports from the web app, on XRPL Testnet. Faces are blurred in these screenshots only. Each photo is cut into tiles; each tile is a leaf of the Merkle tree shown on the right, whose root is anchored on the ledger.
+
+| | |
+|---|---|
+| ![Signed original: Authentic, every tile exact](docs/screenshots/signed.jpg) **🟢 Signed original**: not a pixel changed | ![Edited copy: 62 changed tiles shown in red](docs/screenshots/edited.jpg) **🟠 Edited copy**: the changed tiles, and the tree branches they break |
+| ![After WhatsApp: Authentic, tiles recompressed](docs/screenshots/whatsapp.jpg) **🟢 After WhatsApp**: recompressed and metadata stripped, found through the watermark | ![Redacted: 88 tiles hidden on purpose, the rest verified](docs/screenshots/redacted.jpg) **🟢 Redacted**: hidden tiles stay authenticated by hash |
+| ![AI image: declared by an accredited AI generator](docs/screenshots/ai.jpg) **🔵 AI-generated**: signed by an accredited generator | ![Copied watermark: content does not match the record](docs/screenshots/copied.jpg) **⚪ Copied watermark**: the watermark points to a record whose content doesn't match |
 
 ## Demo scenario
 
